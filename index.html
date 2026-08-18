@@ -60,7 +60,7 @@
   .appbar-left{display:flex; align-items:center; gap:18px; flex-wrap:wrap;}
   .brand{font-family:'Archivo Black',sans-serif; font-size:22px; letter-spacing:0.5px; display:flex; align-items:center; gap:9px;}
   .brand .logo{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,var(--cyan),var(--accent));display:inline-flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,.28);font-weight:800;color:#03171a;overflow:hidden}
-  .brand .logo img{width:36px;height:36px;border-radius:8px;object-fit:cover;display:block;transform:scale(1.28)}
+  .brand .logo img{width:36px;height:36px;border-radius:8px;object-fit:cover;display:block;transform:scale(1.4)}
   .nav{display:flex; gap:10px; flex-wrap:wrap;}
   .nav button{border:1px solid var(--line); background:transparent; color:var(--text-dim); padding:10px 16px; border-radius:999px; cursor:pointer; transition:border-color .15s, color .15s, background .15s;}
   .nav button.active, .nav button:hover{border-color:var(--cyan); color:var(--text);}
@@ -244,6 +244,9 @@
   .rec-list li b{color:var(--lane);}
   .rec-why{font-size:13px;line-height:1.6;background:var(--surface);border-radius:var(--radius-sm);padding:12px;margin-top:8px;}
   .rec-why .lbl{font-size:10px;color:var(--lane);letter-spacing:.1em;margin-bottom:6px;display:block;text-transform:uppercase;}
+  .rec-why-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;}
+  .rec-why-list li{padding-left:16px;position:relative;}
+  .rec-why-list li::before{content:'●';position:absolute;left:0;top:0;color:var(--lane);font-size:8px;line-height:1.9;}
   .rec-empty{color:var(--text-faint);font-size:13px;}
   .hist-item{border-left:2px solid var(--line);padding:6px 0 6px 10px;margin-bottom:8px;font-size:11.5px;color:var(--text-dim);}
   .hist-item .hh{color:var(--text);font-weight:700;font-size:12px;}
@@ -793,8 +796,8 @@
               <button class="ghost-btn" style="width:100%;margin-top:6px;" onclick="addPlay()">+ add play</button>
             </div>
             <div class="panel">
-              <h2>Coach notes</h2>
-              <textarea class="small-input" id="tacticsFreeNotes" placeholder="Free-text situation notes — feeds the AI explanation" style="width:100%;min-height:80px;"></textarea>
+              <h2>Situation notes</h2>
+              <textarea class="small-input" id="tacticsFreeNotes" placeholder="Free-text situation notes (e.g. their best driver looks tired, ref is calling it tight) — folded into the recommendation" style="width:100%;min-height:80px;"></textarea>
             </div>
           </div>
         </div>
@@ -3017,12 +3020,19 @@ function buildTacticsSituation(game){
       form: computeStreak(ownLog), bigGames: findBigGames(ownLog), noteFlags: buildPlayerNoteTally(p, 5) };
   }).filter(Boolean);
   const benchIds = new Set(our.map(t=>t.refId));
-  const bench = roster.filter(p=>!benchIds.has(p.id)).map(p=>({...p, seasonExDrawn:seasonStat(p.id,'exclusion_drawn'), seasonExGiven:seasonStat(p.id,'exclusion'), seasonGoals:seasonStat(p.id,'goal')}));
+  const bench = roster.filter(p=>!benchIds.has(p.id)).map(p=>{
+    const ownLog = ownPlayerGameLog(p, game.id);
+    return { ...p, seasonExDrawn:seasonStat(p.id,'exclusion_drawn'), seasonExGiven:seasonStat(p.id,'exclusion'), seasonGoals:seasonStat(p.id,'goal'),
+      careerVsOpp: careerFor(oppContext, p.name), goalsVsCurrentGoalie: oppGoalieEntry ? careerGoalsVsGoalie(oppContext, p.name, oppGoalieEntry.name) : 0,
+      form: computeStreak(ownLog), bigGames: findBigGames(ownLog), noteFlags: buildPlayerNoteTally(p, 5) };
+  });
   return {manstate, manCount, scoreUs:score.team, scoreOpp:score.opponent, diff:score.team-score.opponent, quarter:app.currentQ, notes, matchups, onField, bench, momentum: computeMomentum(game), oppContext, seasonSeries: ownSeasonSeries(game), oppGoalieName: oppGoalieEntry ? oppGoalieEntry.name : null, opponentToday: analyzeOpponentToday(game)};
 }
 
 function tacticsRuleEngine(sit, game){
   const reasons=[]; const lineupNotes=[];
+
+  if(sit.notes) reasons.push(`Coach note for this situation: "${sit.notes}"`);
 
   // --- Current situation: who's in foul/fatigue trouble right now ---
   sit.onField.forEach(p=>{
@@ -3066,6 +3076,35 @@ function tacticsRuleEngine(sit, game){
     const bg = bigGamePlayer.bigGames[bigGamePlayer.bigGames.length-1];
     reasons.push(`#${bigGamePlayer.cap} ${bigGamePlayer.name||''} has had breakout games before (${bg.goals}G on ${bg.date}) — capable of taking a game over.`);
   }
+
+  // --- Should someone else be in? Three independent bench signals, checked every time: a hot
+  // streak sitting on the bench, a proven scorer specifically against this opponent who isn't
+  // playing, and a same-role production gap. Each is real evidence, not a guess.
+  const hotBenchPlayer = sit.bench.find(p=>p.form && p.form.hot);
+  if(hotBenchPlayer){
+    const sameRole = sit.onField.find(p=>p.wpPosition && p.wpPosition===hotBenchPlayer.wpPosition && (p.wpPosition||'')!=='GK');
+    reasons.push(`#${hotBenchPlayer.cap} ${hotBenchPlayer.name||''} is on the bench but hot — scored in ${hotBenchPlayer.form.scoredInLastN} of their last ${hotBenchPlayer.form.ofLastN} games (avg ${hotBenchPlayer.form.recentAvg.toFixed(1)} vs season avg ${hotBenchPlayer.form.overallAvg.toFixed(1)}).${sameRole?` #${sameRole.cap} ${sameRole.name||''} plays the same role (${sameRole.wpPosition}) on the field right now — worth rotating them in.`:' Worth working them into the rotation.'}`);
+    if(sameRole) lineupNotes.push(`Consider #${hotBenchPlayer.cap} ${hotBenchPlayer.name||''} in for #${sameRole.cap} ${sameRole.name||''} — hot streak on the bench at the same role.`);
+  }
+  const benchScorerVsOpp = [...sit.bench].filter(p=>p.careerVsOpp && p.careerVsOpp.goals>0).sort((a,b)=>b.careerVsOpp.goals-a.careerVsOpp.goals)[0];
+  if(benchScorerVsOpp && !hotBenchPlayer){
+    reasons.push(`#${benchScorerVsOpp.cap} ${benchScorerVsOpp.name||''} is on the bench but has ${benchScorerVsOpp.careerVsOpp.goals} goal(s) in ${benchScorerVsOpp.careerVsOpp.meetings} logged meeting(s) against this exact opponent — a proven weapon against them specifically, worth a look if the current matchups aren't producing.`);
+  }
+  let bestRoleSwap = null;
+  sit.onField.forEach(onP=>{
+    if((onP.wpPosition||'')==='GK' || !onP.wpPosition) return;
+    sit.bench.forEach(benchP=>{
+      if(benchP.wpPosition===onP.wpPosition && benchP.seasonGoals > onP.seasonGoals + 3){
+        const gap = benchP.seasonGoals - onP.seasonGoals;
+        if(!bestRoleSwap || gap>bestRoleSwap.gap) bestRoleSwap = {onP, benchP, gap};
+      }
+    });
+  });
+  if(bestRoleSwap){
+    reasons.push(`#${bestRoleSwap.benchP.cap} ${bestRoleSwap.benchP.name||''} is on the bench at the same role (${bestRoleSwap.benchP.wpPosition}) with ${bestRoleSwap.benchP.seasonGoals} season goals, well ahead of #${bestRoleSwap.onP.cap} ${bestRoleSwap.onP.name||''}'s ${bestRoleSwap.onP.seasonGoals} — a real production gap worth considering if the matchup isn't clicking.`);
+    lineupNotes.push(`Consider #${bestRoleSwap.benchP.cap} ${bestRoleSwap.benchP.name||''} in for #${bestRoleSwap.onP.cap} ${bestRoleSwap.onP.name||''} — clear season scoring gap at the same role.`);
+  }
+
   // --- Recurring coach notes (e.g. repeated "bad pass" flags) from the last 5 games — real
   // pattern, not a one-off, since it only fires at 2+ occurrences.
   const flaggedPlayer = sit.onField.find(p=>p.noteFlags && p.noteFlags.length && p.noteFlags[0].count>=2);
@@ -3112,7 +3151,7 @@ function tacticsRuleEngine(sit, game){
   if(rivalry){
     if(oppContext && oppContext.lastMeeting){
       const lm = oppContext.lastMeeting;
-      const note = lm.note ? (lm.note.length>140 ? lm.note.slice(0,140)+'…' : lm.note) : '';
+      const note = lm.note || '';
       reasons.push(`Last meeting (${lm.date}): ${lm.result==='W'?'Won':'Lost'} ${lm.score}. ${note}`);
     }
     if(sit.diff>0 && sit.quarter>=3){
@@ -3141,15 +3180,15 @@ async function getRecommendation(){
   btn.disabled = true; btn.textContent='Thinking...';
   const sit = buildTacticsSituation(game);
   const rec = tacticsRuleEngine(sit, game);
-  const explanation = rec.reasons.length ? rec.reasons.join(' ') : buildBaselineSummary(sit);
+  const reasons = rec.reasons.length ? rec.reasons : [buildBaselineSummary(sit)];
 
-  renderTacticsRecommendation(rec, explanation, sit);
+  renderTacticsRecommendation(rec, reasons, sit);
   window._lastTacticsSituation = sit; window._lastTacticsRec = rec;
   btn.disabled=false; btn.textContent='Who should be in / what play?';
   document.getElementById('tacticsLogBtn').style.display='inline-block';
 }
 
-function renderTacticsRecommendation(rec, explanation, sit){
+function renderTacticsRecommendation(rec, reasons, sit){
   const el = document.getElementById('tacticsRecArea');
   el.className='rec-box';
 
@@ -3180,7 +3219,7 @@ function renderTacticsRecommendation(rec, explanation, sit){
     <div class="rec-play">${rec.play.name}</div>
     <div class="rec-sub">${rec.play.desc||''}</div>
     <ul class="rec-list">${rec.lineupNotes.map(n=>`<li><b>Lineup:</b> ${n}</li>`).join('') || '<li>No substitutions flagged — current lineup holds.</li>'}</ul>
-    <div class="rec-why"><span class="lbl">Why</span>${explanation}</div>
+    <div class="rec-why"><span class="lbl">Why (${reasons.length} signal${reasons.length===1?'':'s'})</span><ul class="rec-why-list">${reasons.map(r=>`<li>${r}</li>`).join('')}</ul></div>
     ${historyHtml}
   `;
 }
