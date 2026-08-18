@@ -111,13 +111,14 @@
   .stats-grid{display:grid; grid-template-columns:repeat(3, minmax(120px,1fr)); gap:14px; margin-top:14px;}
   .scoreboard{display:grid; grid-template-columns:1.4fr .9fr; gap:18px; align-items:start; margin-top:12px;}
   .score-panel{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
-  .score-card{border:1px solid rgba(255,255,255,.12); border-radius:18px; padding:20px 18px; display:flex; flex-direction:column; justify-content:space-between; gap:14px; min-height:150px; position:relative; overflow:hidden;}
-  .score-card-icon{position:absolute; right:-16px; bottom:-16px; pointer-events:none; transform:rotate(-8deg);}
+  .score-card{border:1px solid rgba(255,255,255,.12); border-radius:18px; padding:18px; display:flex; flex-direction:column; justify-content:space-between; gap:16px; min-height:150px; position:relative; overflow:hidden;}
+  .score-card-icon{position:absolute; right:-20px; bottom:-24px; pointer-events:none; transform:rotate(-8deg); opacity:.5;}
   .score-card > *:not(.score-card-icon){position:relative; z-index:1;}
-  .score-card .score-top{display:flex; align-items:center; gap:12px;}
-  .score-card .score-label{font-size:14px; font-weight:700; color:var(--text); line-height:1.25;}
-  .score-card .score-mascot{font-size:11px; color:var(--text-faint); margin-top:2px;}
-  .score-card .score-value{font-size:52px; font-weight:800; line-height:1; color:var(--text); text-shadow:0 2px 12px rgba(0,0,0,.35);}
+  .score-card .score-top{display:flex; align-items:center; gap:10px; min-width:0;}
+  .score-card .score-names{min-width:0; overflow:hidden;}
+  .score-card .score-label{font-size:14px; font-weight:700; color:var(--text); line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .score-card .score-mascot{font-size:11px; color:var(--text-faint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .score-card .score-value{font-size:52px; font-weight:800; line-height:1; color:var(--text); text-shadow:0 2px 12px rgba(0,0,0,.35); text-align:right;}
   .score-tile{background:var(--surface-2); border:1px solid var(--line); border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:8px;}
   .score-tile span{font-size:12px; color:var(--text-faint);}
   .score-tile strong{font-size:20px;}
@@ -203,6 +204,7 @@
   .ev.unmatched{border-style:dashed; color:var(--text-faint);}
   .mini-select{background:var(--bg-deep);border:1px solid var(--line);color:var(--text);border-radius:5px;font-size:12px;padding:8px 10px;font-family:'Inter';}
   @media (max-width:880px){.section-grid{grid-template-columns:1fr;}.form-row{grid-template-columns:1fr;}.data-row{flex-direction:column; align-items:flex-start;}.appbar-row{flex-direction:column; align-items:flex-start;}}
+  @media (max-width:640px){.scoreboard{grid-template-columns:1fr;}.score-panel{grid-template-columns:1fr;}.score-card{min-height:auto;}.score-card .score-value{font-size:44px;}}
 
   /* ---------- Tactics board ---------- */
   .manstate-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-family:'JetBrains Mono';font-size:11px;letter-spacing:.06em;border:1px solid var(--line);color:var(--text-dim);}
@@ -620,24 +622,25 @@
           <button class="primary-btn action-btn" onclick="navigate('tactics', app.selectedGameId)">Tactics board</button>
         </div>
 
+        <div class="panel">
+          <h2>Live box score</h2>
+          <div class="scoreboard">
+            <div class="score-panel">
+              <div class="score-card" id="teamScoreCard"></div>
+              <div class="score-card" id="oppScoreCard"></div>
+            </div>
+            <div class="score-extras">
+              <div class="score-tile"><span>Status</span><strong id="boxStatus">Upcoming</strong></div>
+              <div class="score-tile"><span>Period</span><strong id="boxPeriod">Q1</strong></div>
+              <div class="score-tile"><span>Events</span><strong id="boxEventCount">0</strong></div>
+            </div>
+          </div>
+          <div id="gameQuarterTabs" style="margin-top:18px; display:flex; gap:8px; flex-wrap:wrap;"></div>
+          <div class="feed" id="gameFeed"></div>
+        </div>
+
         <div class="section-grid">
           <div>
-            <div class="panel">
-              <h2>Live box score</h2>
-              <div class="scoreboard">
-                <div class="score-panel">
-                  <div class="score-card" id="teamScoreCard"></div>
-                  <div class="score-card" id="oppScoreCard"></div>
-                </div>
-                <div class="score-extras">
-                  <div class="score-tile"><span>Status</span><strong id="boxStatus">Upcoming</strong></div>
-                  <div class="score-tile"><span>Period</span><strong id="boxPeriod">Q1</strong></div>
-                  <div class="score-tile"><span>Events</span><strong id="boxEventCount">0</strong></div>
-                </div>
-              </div>
-              <div id="gameQuarterTabs" style="margin-top:18px; display:flex; gap:8px; flex-wrap:wrap;"></div>
-              <div class="feed" id="gameFeed"></div>
-            </div>
             <div class="panel" id="gameControlsPanel">
               <h2>Game controls</h2>
               <div class="data-row" style="align-items:center; gap:12px; flex-wrap:wrap;">
@@ -1458,17 +1461,25 @@ function mascotBannerHtml(brand, opts){
 }
 // Resolve branding for an opponent that's just a name string on a game — prefer a real seeded/claimed
 // Team if one matches, else fall back to TEAM_BRANDING, else generic defaults.
+// A team's `mascot` field is often a full descriptive line ("Oski the Bear — California Golden
+// Bears") meant for the team page hero — too long for the compact score card. Use just the part
+// before the em dash (or the whole thing if there isn't one) so it fits on a single line.
+function shortMascotLabel(mascot){
+  if(!mascot) return '';
+  return mascot.split(/\s+—\s+/)[0];
+}
 function renderScoreCard(elId, brand, scoreValue){
   const el = document.getElementById(elId); if(!el) return;
   const p = brand.primaryColor || '#0A2A4D', s = brand.secondaryColor || '#FDB515';
   const bKey = guessBrandingKey(brand.name);
   const iconKey = brand.icon || (bKey ? TEAM_BRANDING[bKey].icon : null);
+  const mascotLabel = shortMascotLabel(brand.mascot);
   el.style.background = `linear-gradient(160deg, ${p}, ${s} 150%)`;
   el.style.borderColor = `${p}`;
   el.innerHTML = `
     <div class="score-card-icon">${mascotIconSvg(iconKey, '#fff', 110, .2)}</div>
-    <div class="score-top">${teamBadgeHtml(brand.name, brand.logo, p, s, 46)}
-      <div><div class="score-label">${brand.name}</div>${brand.mascot?`<div class="score-mascot">${brand.mascot}</div>`:''}</div>
+    <div class="score-top">${teamBadgeHtml(brand.name, brand.logo, p, s, 40)}
+      <div class="score-names"><div class="score-label">${brand.name}</div>${mascotLabel?`<div class="score-mascot">${mascotLabel}</div>`:''}</div>
     </div>
     <div class="score-value">${scoreValue}</div>`;
 }
@@ -2399,7 +2410,7 @@ function eventLabelInfo(ev){
 }
 
 function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); if(!game) return; if(!app.quarterStart[app.currentQ]) app.quarterStart[app.currentQ]=Date.now(); const offset=Date.now()-app.quarterStart[app.currentQ]; const result=parsePhrase(rawText, offset);
-  if(result.type==='undo'){ if(game.quarters[app.currentQ].length){ game.quarters[app.currentQ].pop(); saveState(); renderGame(); } return; }
+  if(result.type==='undo'){ undoEvent(); return; }
   // prevent parsed/voice events from being applied by unauthorized users
   if(!hasManagePermission(game)){
     console.warn('user lacks permission to apply parsed events'); return;
@@ -2407,10 +2418,15 @@ function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); i
   // enforce statFor selection: if manager chose only one side, drop events for the other side
   const forced = app.statFor && app.statFor.gameId===game.id && typeof app.statFor.side!=='undefined' && app.statFor.side!==null;
   const allowedSide = forced ? app.statFor.side : null;
+  // One phrase can produce several events (a goal's implied shot_attempt, or a compound phrase
+  // naming two players) — tag them all with the same batchId so "Undo last" removes the whole
+  // phrase's worth of events, not just the last one and leaving the rest dangling.
+  const batchId = 'b'+Date.now()+Math.random().toString(36).slice(2,6);
   expandShotAttempts(result.events).forEach(ev=>{
     // ensure side is explicit: roster-linked events are team, otherwise opponent
     if(!ev.side) ev.side = ev.playerId ? 'team' : 'opponent';
     if(allowedSide && ev.side !== allowedSide){ console.warn('dropping event due to side restriction', ev); return; }
+    ev.batchId = batchId;
     game.quarters[app.currentQ].push(ev);
     if(ev.stat_type==='unmatched') ev.unmatched=true;
   }); saveState(); renderGame(); }
@@ -2450,8 +2466,11 @@ function addManualEvent(){ const game=findGame(app.selectedGameId); if(!game) re
     const ev={playerId:null, playerCap: cap, stat_type:stat, side:'opponent', wall_time_offset_ms:offset, raw_phrase:`(manual) ${statDef(stat).label} opponent ${cap||''}`};
     evs = expandShotAttempts([ev]);
   }
-  // ensure finalSide applied
-  evs = evs.map(e=>({ ...e, side: finalSide || e.side }));
+  // ensure finalSide applied; tag every event from this one action with the same batchId so
+  // "Undo last" removes the whole action (e.g. a goal's implied shot_attempt) instead of leaving
+  // a dangling half-applied stat behind.
+  const batchId = 'b'+Date.now()+Math.random().toString(36).slice(2,6);
+  evs = evs.map(e=>({ ...e, side: finalSide || e.side, batchId }));
   evs.forEach(e=>game.quarters[app.currentQ].push(e)); saveState(); renderGame(); }
 
 function addManualNote(){
@@ -2482,7 +2501,21 @@ function renderGameNotes(game){
     return `<div class="item"><strong>${who}</strong> <span style="color:var(--text-faint);font-size:11px;">Q${n.quarter} · ${fmtTime(n.wall_time_offset_ms)}</span><div class="entity-meta"><span>${n.note}</span></div></div>`;
   }).join('');
 }
-function undoEvent(){ const game=findGame(app.selectedGameId); if(!game) return; if(game.quarters[app.currentQ].length){ game.quarters[app.currentQ].pop(); saveState(); renderGame(); } }
+// Removes every event from the last logged action, not just the last array entry — a single
+// action (a goal + its implied shot_attempt, or a compound voice phrase naming two players) can
+// span multiple events, all tagged with the same batchId when they were pushed. Older events
+// logged before batchId existed just pop one at a time, same as before.
+function undoEvent(){
+  const game=findGame(app.selectedGameId); if(!game) return;
+  const q = game.quarters[app.currentQ]; if(!q.length) return;
+  const lastBatchId = q[q.length-1].batchId;
+  if(lastBatchId){
+    while(q.length && q[q.length-1].batchId===lastBatchId) q.pop();
+  } else {
+    q.pop();
+  }
+  saveState(); renderGame();
+}
 
 /* ---------------- Tactics board ---------------- */
 function ensureGameTacticalFields(game){
