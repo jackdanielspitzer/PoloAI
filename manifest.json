@@ -1,0 +1,17 @@
+{
+  "name": "PoloAI — Team Launch & Live Tracker",
+  "short_name": "PoloAI",
+  "description": "Live team hub and coaching brain for water polo — rosters, schedules, real-time box score tracking, and a tactics engine backed by real matchup history.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#04162B",
+  "theme_color": "#04162B",
+  "orientation": "any",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
