@@ -353,9 +353,14 @@
   <div id="statForModal" class="modal-overlay hidden" style="display:none;">
     <div class="modal-panel">
       <div class="modal-header">
-        <h3>Who are you tracking?</h3>
+        <h3>Set up this game</h3>
       </div>
-      <p style="color:var(--text-dim); margin-top:6px;">Choose whether you'll record stats for the team, the opponent, or both during this session.</p>
+      <p style="color:var(--text-dim); margin-top:6px;">Which cap color is your team wearing today? Home/away swaps this every game — get it wrong and voice tracking attributes every call to the wrong side.</p>
+      <div style="display:flex; gap:10px; margin-top:10px;" id="gameColorButtons">
+        <button class="ghost-btn" id="colorDarkBtn" onclick="setGameColor('Dark')">We're Dark</button>
+        <button class="ghost-btn" id="colorLightBtn" onclick="setGameColor('Light')">We're Light</button>
+      </div>
+      <p style="color:var(--text-dim); margin-top:16px;">Choose whether you'll record stats for the team, the opponent, or both during this session.</p>
       <div style="display:flex; gap:10px; margin-top:12px;">
         <button class="primary-btn" onclick="setStatFor('team')">My team only</button>
         <button class="ghost-btn" onclick="setStatFor('opponent')">Opponent only</button>
@@ -962,13 +967,15 @@ const app = {
   quarterStart:{},
   pendingBuffer:'',
   pendingTimer:null,
+  lastVoiceActor:null,
+  lastVoiceActorAt:0,
   plays: DEFAULT_PLAYS.slice(),
   customMatchupGames: {},
 };
 
 function blankTeam(){ return { id:'t'+Date.now()+Math.random().toString(36).slice(2,6), name:'', manager:'', coach:'', color:'Dark', mascot:'', primaryColor:'#0A2A4D', secondaryColor:'#FDB515', logo:null, players:[], games:[],
   claimStatus:'unclaimed', claimedByEmail:null, claimedByUserId:null, claimRequestedAt:null }; }
-function blankGame(teamId){ return { id:'g'+Date.now()+Math.random().toString(36).slice(2,6), teamId, opponent:'', date:'', time:'', location:'', status:'upcoming', quarters:{1:[],2:[],3:[],4:[]}, notes:'', createdAt:Date.now(), tacticalTokens:[], oppRoster:[], tacticalLog:[] }; }
+function blankGame(teamId){ return { id:'g'+Date.now()+Math.random().toString(36).slice(2,6), teamId, opponent:'', date:'', time:'', location:'', status:'upcoming', quarters:{1:[],2:[],3:[],4:[]}, notes:'', createdAt:Date.now(), tacticalTokens:[], oppRoster:[], tacticalLog:[], ourColor:null }; }
 function blankPlayer(teamId){ return { id:'p'+Date.now()+Math.random().toString(36).slice(2,6), teamId, cap:'', name:'', role:'player', wpPosition:'', aliases:[] }; }
 
 // Paste your deployed Google Apps Script Web App URL here (Deploy > New deployment > Web app).
@@ -1055,7 +1062,7 @@ async function pullSharedStateFromServer(applyIfNewer){
 
 function startSharedStatePolling(){ setInterval(()=>pullSharedStateFromServer(true), 8000); }
 
-function loadState(){ try{ const raw = localStorage.getItem('poloai-app-state'); if(raw){ const stored = JSON.parse(raw); Object.assign(app, {page:'home', selectedTeamId:null, selectedGameId:null, selectedPlayerId:null, manageMode:false, currentQ:1, listening:false, recognition:null, quarterStart:{}, pendingBuffer:'', pendingTimer:null}, stored); } } catch(e){ console.warn('load failed',e); }
+function loadState(){ try{ const raw = localStorage.getItem('poloai-app-state'); if(raw){ const stored = JSON.parse(raw); Object.assign(app, {page:'home', selectedTeamId:null, selectedGameId:null, selectedPlayerId:null, manageMode:false, currentQ:1, listening:false, recognition:null, quarterStart:{}, pendingBuffer:'', pendingTimer:null, lastVoiceActor:null, lastVoiceActorAt:0}, stored); } } catch(e){ console.warn('load failed',e); }
   // migrate: seed the opponents list from any opponent names already used on games,
   // so older saved data (from before there was a dropdown) still shows up as options.
   if(!Array.isArray(app.opponents)) app.opponents = [];
@@ -1955,7 +1962,7 @@ function renderGame(){ const game = findGame(app.selectedGameId); if(!game){ nav
   if(!notice){ notice = document.createElement('span'); notice.id='gameViewerNotice'; notice.className='pill'; document.getElementById('gameHeading').insertAdjacentElement('afterend', notice); }
   if(!controlsVisible){ notice.style.display='inline-flex'; notice.textContent = 'Viewer — read-only'; } else { notice.style.display='none'; }
   // if entering manage mode and controls visible, ensure user picks which side to track
-  if(controlsVisible){ if(!app.statFor || app.statFor.gameId !== game.id){ showStatForModal(game); } }
+  if(controlsVisible){ if(!app.statFor || app.statFor.gameId !== game.id || !game.ourColor){ showStatForModal(game); } }
   renderGameRoster(game);
   renderGameQuarterTabs(game);
   renderGameFeed(game);
@@ -1971,8 +1978,18 @@ function hasManagePermission(game){ const u=currentUser(); if(!u) return false; 
   if(u.role==='coach'){ return u.teamId===game.teamId; }
   return false; }
 
-function showStatForModal(game){ const m=document.getElementById('statForModal'); m.style.display='flex'; m.classList.remove('hidden'); }
+function showStatForModal(game){ const m=document.getElementById('statForModal'); m.style.display='flex'; m.classList.remove('hidden');
+  const darkBtn=document.getElementById('colorDarkBtn'), lightBtn=document.getElementById('colorLightBtn');
+  if(darkBtn && lightBtn){
+    darkBtn.className = game.ourColor==='Dark' ? 'primary-btn' : 'ghost-btn';
+    lightBtn.className = game.ourColor==='Light' ? 'primary-btn' : 'ghost-btn';
+  }
+}
 function dismissStatForModal(){ const m=document.getElementById('statForModal'); m.style.display='none'; m.classList.add('hidden'); }
+// Cap color is set PER GAME, not per team — home/away swaps which color you wear every game (the
+// away team traditionally wears dark, home wears light), so a fixed team-level color was silently
+// misattributing every voice call in any game where that flipped.
+function setGameColor(color){ const game = findGame(app.selectedGameId); if(!game) return; game.ourColor = color; saveState(); showStatForModal(game); }
 function setStatFor(side){ const game = findGame(app.selectedGameId); if(!game) return; app.statFor = { gameId: game.id, side: side }; saveState(); dismissStatForModal(); renderGame(); }
 
 function renderGameRoster(game){ const list = document.getElementById('gameRosterList'); list.innerHTML=''; const roster=getGameRoster(game);
@@ -2317,7 +2334,9 @@ function parseNumberWord(w){ if(w==null) return null; if(/^\d{1,2}$/.test(w)) re
 // side as the assister, even if the speaker didn't repeat the color).
 function tokenizeCapMentions(text, game){
   const team = game ? findTeam(game.teamId) : null;
-  const ourColor = ((team && team.color) || 'Dark').toLowerCase();
+  // Per-game cap color wins over the team's stored default — home/away flips which color you
+  // actually wear, and the team-level color alone can't know that for a specific matchup.
+  const ourColor = ((game && game.ourColor) || (team && team.color) || 'Dark').toLowerCase();
   const roster = game ? getGameRoster(game) : [];
   const words = text.split(/\s+/);
   const positions = []; let charPos = 0;
@@ -2438,12 +2457,26 @@ function cleanNoteText(text){
   return text.split(/\s+/).filter(w=>w && !NOTE_FILLER_WORDS.has(w)).join(' ').trim();
 }
 
+// A coach naturally says the cap, pauses to watch the play develop, then describes what happened —
+// two breaths, two sentences. The browser's own pause-detection can split that into two separate
+// final results, and the second one ("drew a penalty") has no cap mention of its own. Carry the
+// most recently named player forward for a few seconds so that doesn't just fail — but ONLY to
+// back a recognized stat keyword. Never extend it to the open-ended note fallback below: silently
+// attaching unrelated chatter to whoever was mentioned last would corrupt data worse than just
+// leaving a stray phrase visibly unmatched.
+const ACTOR_CARRY_FORWARD_MS = 7000;
 function parsePhrase(rawText, offsetMs){ const text=rawText.toLowerCase().trim().replace(/[.,!?]/g,''); if(/\b(undo|scratch that)\b/.test(text)) return {type:'undo'};
   const game = app.selectedGameId ? findGame(app.selectedGameId) : null;
-  const mentions=findMentions(text); const actor1=mentions[0]||null; const actor2=mentions[1]||null; const base={wall_time_offset_ms:offsetMs, raw_phrase:rawText};
+  const mentions=findMentions(text); let actor1=mentions[0]||null; const actor2=mentions[1]||null; const base={wall_time_offset_ms:offsetMs, raw_phrase:rawText};
+  if(actor1){ app.lastVoiceActor = actor1; app.lastVoiceActorAt = Date.now(); }
   if(actor1){ for(const rule of COMPOUND_RULES){ if(rule.test(text)){ const events=rule.build(text,actor1,actor2,base,game); if(events && events.length) return {type:'events', events}; } } }
-  let matchedKey=null; for(const p of PATTERN_INDEX){ if(text.includes(p.phrase)){ matchedKey=p.key; break; } }
-  if(matchedKey && actor1){ return {type:'events', events:[{...base, playerId:actor1.playerId, playerCap:actor1.cap, side:actor1.side, stat_type:matchedKey}]}; }
+  // Match against a filler-stripped copy too ("drew a penalty" needs to hit the "drew penalty"
+  // pattern) — natural speech scatters "a"/"the"/"um" between the exact words a fixed phrase list
+  // expects, and a real coach isn't going to talk like a search query.
+  const normalizedText = cleanNoteText(text);
+  let matchedKey=null; for(const p of PATTERN_INDEX){ if(text.includes(p.phrase) || normalizedText.includes(p.phrase)){ matchedKey=p.key; break; } }
+  const carriedActor = (!actor1 && app.lastVoiceActor && (Date.now()-app.lastVoiceActorAt)<=ACTOR_CARRY_FORWARD_MS) ? app.lastVoiceActor : null;
+  if(matchedKey && (actor1||carriedActor)){ const who=actor1||carriedActor; return {type:'events', events:[{...base, playerId:who.playerId, playerCap:who.cap, side:who.side, stat_type:matchedKey}]}; }
   // No recognized stat, but a player WAS named — treat whatever's left as a free-text coach note
   // instead of discarding it. "dark 3 bad pass" or "light 5 too high in the lane" just work, no
   // fixed vocabulary needed.
