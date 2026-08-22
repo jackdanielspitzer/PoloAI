@@ -3134,6 +3134,30 @@ function findBestRoleSwaps(sit){
   });
   return swaps.sort((a,b)=>b.gap-a.gap);
 }
+// Every current pairing carries several independent signals (career goals for/against, block/steal
+// history, scouting notes, shooting efficiency) that were previously checked in isolation — this
+// folds all of them for ONE pairing into a single directional "edge" number so every matchup on the
+// board can be ranked against every other one, instead of only ever surfacing whichever single
+// condition happened to match first.
+function computeMatchupEdge(mu){
+  let edge = 0; const drivers = [];
+  if(mu.ourCareer && mu.ourCareer.goals){ edge += mu.ourCareer.goals; drivers.push(`${mu.our} has scored ${mu.ourCareer.goals} on them across ${mu.ourCareer.meetings} meeting(s)`); }
+  if(mu.oppCareer && mu.oppCareer.goals){ edge -= mu.oppCareer.goals; drivers.push(`${mu.opp} has scored ${mu.oppCareer.goals} on us across ${mu.oppCareer.meetings} meeting(s)`); }
+  if(mu.blockedBy){ edge -= 2; drivers.push(`${mu.opp} has blocked ${mu.our} before`); }
+  if(mu.stolenBy){ edge -= 1.5; drivers.push(`${mu.opp} has stripped the ball off ${mu.our} before`); }
+  if(mu.oppNote && /weak|slow|foul|tired/i.test(mu.oppNote)){ edge += 2; drivers.push(`scouted: "${mu.oppNote}"`); }
+  if(mu.ourId){ const s = seasonShootingPct(mu.ourId); if(s && s.pct>=0.45){ edge += 1.5; drivers.push(`${mu.our} shooting ${Math.round(s.pct*100)}% this season`); } }
+  return { edge: Math.round(edge*10)/10, drivers };
+}
+// Score every matchup currently on the board and rank them, so the engine can point at the single
+// best exploit AND the single biggest risk on the pool at once — a genuine read of the whole
+// board, not just whichever one pairing happened to trip a rule first.
+function rankMatchupEdges(sit){
+  return sit.matchups.map(mu=>({ mu, ...computeMatchupEdge(mu) })).filter(r=>r.drivers.length>0).sort((a,b)=>b.edge-a.edge);
+}
+// Late and close changes what matters: proven late-game production and discipline history carry
+// more weight, and play selection should favor plays built for exactly this moment.
+function isCrunchTime(sit){ return sit.quarter>=4 && Math.abs(sit.diff)<=2; }
 
 function buildTacticsSituation(game){
   const roster = getGameRoster(game);
@@ -3154,7 +3178,7 @@ function buildTacticsSituation(game){
       blockedBy: wasBlockedBy(oppContext, ourP && ourP.name, oppP && oppP.name),
       stolenBy: wasStolenBy(oppContext, ourP && ourP.name, oppP && oppP.name),
       situationalVsOpp: oppContext && ourP ? oppContext.situational[(ourP.name||'').toLowerCase()] : null,
-      ourCap: ourP ? ourP.cap : null
+      ourCap: ourP ? ourP.cap : null, ourId: ourP ? ourP.id : null
     };
   });
   const onField = our.map(t=>{
@@ -3182,28 +3206,36 @@ function buildTacticsSituation(game){
 // "picky" instead of a flat wall of everything that happened to match.
 function tacticsRuleEngine(sit, game){
   const reasons=[]; const lineupNotes=[];
-  const push = (text, weight, tag) => reasons.push({text, weight, tag});
+  // capRef tags a reason to a specific on-field/bench player's cap number so independent signals
+  // about the SAME player can be found and stacked later — done at creation time, not by parsing
+  // text back out afterward, since cap numbers repeat across teams ("opponent #7" != "our #7").
+  const push = (text, weight, tag, capRef) => reasons.push({text, weight, tag, capRef});
 
   if(sit.notes) push(`Coach note for this situation: "${sit.notes}"`, 10, 'Coach input');
 
   // --- Current situation: who's in foul/fatigue trouble right now ---
   sit.onField.forEach(p=>{
     if(p.gameExGiven>=2){
-      push(`#${p.cap} ${p.name||''} has 2 exclusions already this game — one more and they're out for the rest of the game. Consider subbing.`, 9, 'Foul trouble');
+      push(`#${p.cap} ${p.name||''} has 2 exclusions already this game — one more and they're out for the rest of the game. Consider subbing.`, 9, 'Foul trouble', p.cap);
       const bestBench = [...sit.bench].sort((a,b)=>(b.seasonExDrawn-b.seasonExGiven)-(a.seasonExDrawn-a.seasonExGiven))[0];
       if(bestBench) lineupNotes.push(`Sub #${bestBench.cap} ${bestBench.name||''} in for #${p.cap} ${p.name||''} (foul trouble).`);
     }
-    if(p.fatigue==='High') push(`#${p.cap} ${p.name||''} is flagged High fatigue.`, 5, 'Fatigue');
+    if(p.fatigue==='High') push(`#${p.cap} ${p.name||''} is flagged High fatigue.`, 5, 'Fatigue', p.cap);
   });
 
-  let candidatePlays = app.plays.filter(p=>p.tags.toLowerCase().includes(sit.manstate));
+  // Late and close overrides normal man-state play selection first — a 6v5 set with 90 seconds left
+  // down 1 calls for the last-minute-tagged version of that set, not just any man-up play.
+  const crunch = isCrunchTime(sit);
+  let candidatePlays = crunch ? app.plays.filter(p=>/last-minute|clutch/i.test(p.tags)) : [];
+  if(candidatePlays.length===0) candidatePlays = app.plays.filter(p=>p.tags.toLowerCase().includes(sit.manstate));
   if(candidatePlays.length===0) candidatePlays = app.plays;
   const chosenPlay = candidatePlays[0] || {name:'No play matched', desc:'Add plays to the library for this situation.'};
 
+  if(crunch) push(`Q${sit.quarter}, margin of ${Math.abs(sit.diff)} — this is crunch time. Proven late-game production and discipline matter more here than a normal-time read would suggest.`, 9, 'Crunch time');
   if(sit.manstate==='man-up') push('We have an extra player in the water — run a set 6v5 rather than free-lancing.', 6, 'Man-state');
   if(sit.manstate==='man-down') push('We are down a player — priority is denying the high-percentage shot, not the steal.', 6, 'Man-state');
-  if(sit.diff<0 && sit.quarter>=3) push(`We're down ${Math.abs(sit.diff)} in Q${sit.quarter} — favor higher-tempo options over ball control.`, 6, 'Score/quarter');
-  if(sit.diff>0 && sit.quarter>=3) push(`We're up ${sit.diff} in Q${sit.quarter} — favor clock control and safe offense.`, 6, 'Score/quarter');
+  if(sit.diff<0 && sit.quarter>=3) push(`We're down ${Math.abs(sit.diff)} in Q${sit.quarter} — favor higher-tempo options over ball control.`, crunch?8:6, 'Score/quarter');
+  if(sit.diff>0 && sit.quarter>=3) push(`We're up ${sit.diff} in Q${sit.quarter} — favor clock control and safe offense.`, crunch?8:6, 'Score/quarter');
 
   // --- Momentum: what actually just happened in this game's event log ---
   const m = sit.momentum;
@@ -3226,17 +3258,17 @@ function tacticsRuleEngine(sit, game){
 
   // --- Own recent form: hot/cold streaks and breakout-game history, from this team's own game log ---
   const hotPlayer = sit.onField.find(p=>p.form && p.form.hot);
-  if(hotPlayer) push(`#${hotPlayer.cap} ${hotPlayer.name||''} is hot — scored in ${hotPlayer.form.scoredInLastN} of their last ${hotPlayer.form.ofLastN} games (avg ${hotPlayer.form.recentAvg.toFixed(1)} vs season avg ${hotPlayer.form.overallAvg.toFixed(1)}) — keep riding them.`, 6, 'Form');
+  if(hotPlayer) push(`#${hotPlayer.cap} ${hotPlayer.name||''} is hot — scored in ${hotPlayer.form.scoredInLastN} of their last ${hotPlayer.form.ofLastN} games (avg ${hotPlayer.form.recentAvg.toFixed(1)} vs season avg ${hotPlayer.form.overallAvg.toFixed(1)}) — keep riding them.`, 6, 'Form', hotPlayer.cap);
   const coldPlayer = sit.onField.find(p=>p.form && p.form.cold);
-  if(coldPlayer) push(`#${coldPlayer.cap} ${coldPlayer.name||''} has gone scoreless the last ${coldPlayer.form.ofLastN} games (season avg ${coldPlayer.form.overallAvg.toFixed(1)}) — consider a different look or matchup for them.`, 5, 'Form');
+  if(coldPlayer) push(`#${coldPlayer.cap} ${coldPlayer.name||''} has gone scoreless the last ${coldPlayer.form.ofLastN} games (season avg ${coldPlayer.form.overallAvg.toFixed(1)}) — consider a different look or matchup for them.`, 5, 'Form', coldPlayer.cap);
   const bigGamePlayer = sit.onField.find(p=>p.bigGames && p.bigGames.length>0);
   if(bigGamePlayer){
     const bg = bigGamePlayer.bigGames[bigGamePlayer.bigGames.length-1];
-    push(`#${bigGamePlayer.cap} ${bigGamePlayer.name||''} has had breakout games before (${bg.goals}G on ${bg.date}) — capable of taking a game over.`, 4, 'Form');
+    push(`#${bigGamePlayer.cap} ${bigGamePlayer.name||''} has had breakout games before (${bg.goals}G on ${bg.date}) — capable of taking a game over.`, 4, 'Form', bigGamePlayer.cap);
   }
   // --- Season shooting efficiency among on-field players — a real quantitative edge, not a hunch ---
   const efficientShooter = sit.onField.map(p=>({p, shooting: seasonShootingPct(p.id)})).filter(x=>x.shooting && x.shooting.pct>=0.45).sort((a,b)=>b.shooting.pct-a.shooting.pct)[0];
-  if(efficientShooter) push(`#${efficientShooter.p.cap} ${efficientShooter.p.name||''} is shooting ${Math.round(efficientShooter.shooting.pct*100)}% this season (${efficientShooter.shooting.goals}/${efficientShooter.shooting.attempts}) — a clearly above-average look, worth the extra pass to set it up.`, 5, 'Shooting efficiency');
+  if(efficientShooter) push(`#${efficientShooter.p.cap} ${efficientShooter.p.name||''} is shooting ${Math.round(efficientShooter.shooting.pct*100)}% this season (${efficientShooter.shooting.goals}/${efficientShooter.shooting.attempts}) — a clearly above-average look, worth the extra pass to set it up.`, 5, 'Shooting efficiency', efficientShooter.p.cap);
 
   // --- Should someone else be in? One ranked, quantified comparison instead of three anecdotes —
   // every on-field player is scored against same-role bench players and only a real gap (>=3.0)
@@ -3261,7 +3293,7 @@ function tacticsRuleEngine(sit, game){
   const flaggedPlayer = sit.onField.find(p=>p.noteFlags && p.noteFlags.length && p.noteFlags[0].count>=2);
   if(flaggedPlayer){
     const flag = flaggedPlayer.noteFlags[0];
-    push(`#${flaggedPlayer.cap} ${flaggedPlayer.name||''} has been flagged "${flag.text}" ${flag.count}x in recent games (last: ${flag.lastDate}) — worth accounting for in this situation.`, 6, 'Coach notes');
+    push(`#${flaggedPlayer.cap} ${flaggedPlayer.name||''} has been flagged "${flag.text}" ${flag.count}x in recent games (last: ${flag.lastDate}) — worth accounting for in this situation.`, 6, 'Coach notes', flaggedPlayer.cap);
   }
 
   // --- How the opponent is actually playing THIS game, right now (live, not historical) ---
@@ -3277,18 +3309,21 @@ function tacticsRuleEngine(sit, game){
     }
   }
 
-  // --- Career history on the current matchups (from logged box scores vs this opponent) ---
-  const provenScorer = [...sit.matchups].filter(mu=>mu.ourCareer && mu.ourCareer.goals>0).sort((a,b)=>b.ourCareer.goals-a.ourCareer.goals)[0];
-  if(provenScorer){
-    const tendency = describeSituationalTendency(provenScorer.situationalVsOpp);
-    push(`${provenScorer.our} has ${provenScorer.ourCareer.goals} goal(s) across ${provenScorer.ourCareer.meetings} logged meeting(s) vs this opponent — proven production, keep feeding them.${tendency?` Tends to score most ${tendency}.`:''}`, 7, 'Matchup history');
+  // --- Every current matchup, ranked together by composite edge — not one isolated flag at a time.
+  // This is the "look at every degree of freedom on the board at once" pass: career goals for/against,
+  // block/steal history, scouting notes, and shooting efficiency all feed one number per pairing.
+  const rankedEdges = rankMatchupEdges(sit);
+  const bestExploit = rankedEdges.find(r=>r.edge>0);
+  if(bestExploit){
+    const tendency = describeSituationalTendency(bestExploit.mu.situationalVsOpp);
+    push(`Best matchup on the board right now: ${bestExploit.mu.our} vs ${bestExploit.mu.opp} (edge +${bestExploit.edge}) — ${bestExploit.drivers.join('; ')}.${tendency?` Tends to score most ${tendency}.`:''}`, 7, 'Matchup edge', bestExploit.mu.ourCap);
   }
-  const blockedMatchup = sit.matchups.find(mu=>mu.blockedBy);
-  if(blockedMatchup) push(`${blockedMatchup.opp} has blocked ${blockedMatchup.our} before in this rivalry — look for the kick-out or pump-fake instead of a direct shot into that matchup.`, 6, 'Matchup history');
-  const stolenMatchup = sit.matchups.find(mu=>mu.stolenBy);
-  if(stolenMatchup) push(`${stolenMatchup.opp} has stripped/stolen the ball off ${stolenMatchup.our} before — protect the ball two-handed and don't force a pass into that matchup.`, 6, 'Matchup history');
+  const biggestRisk = [...rankedEdges].reverse().find(r=>r.edge<=-2);
+  if(biggestRisk && (!bestExploit || biggestRisk.mu.our!==bestExploit.mu.our)){
+    push(`Riskiest matchup on the board: ${biggestRisk.mu.our} vs ${biggestRisk.mu.opp} (edge ${biggestRisk.edge}) — ${biggestRisk.drivers.join('; ')}. Consider feeding a different matchup instead.`, 7, 'Matchup edge');
+  }
   const goalieThreat = [...sit.onField].filter(p=>p.goalsVsCurrentGoalie>0).sort((a,b)=>b.goalsVsCurrentGoalie-a.goalsVsCurrentGoalie)[0];
-  if(goalieThreat) push(`#${goalieThreat.cap} ${goalieThreat.name||''} has beaten ${sit.oppGoalieName} ${goalieThreat.goalsVsCurrentGoalie} time(s) before — keep testing them from the same spot.`, 6, 'Matchup history');
+  if(goalieThreat) push(`#${goalieThreat.cap} ${goalieThreat.name||''} has beaten ${sit.oppGoalieName} ${goalieThreat.goalsVsCurrentGoalie} time(s) before — keep testing them from the same spot.`, 6, 'Matchup history', goalieThreat.cap);
 
   // --- This season's series vs this exact opponent (this team's own logged games) ---
   if(sit.seasonSeries){
@@ -3313,10 +3348,33 @@ function tacticsRuleEngine(sit, game){
     }
   }
 
-  reasons.sort((a,b)=>b.weight-a.weight);
-  const totalWeight = reasons.reduce((s,r)=>s+r.weight, 0);
-  const confidence = totalWeight>=30 ? 'High' : totalWeight>=14 ? 'Medium' : reasons.length ? 'Low' : 'None';
-  return {play:chosenPlay, reasons, lineupNotes, confidence, totalWeight};
+  const stacked = mergeStackedEvidence(reasons);
+  stacked.sort((a,b)=>b.weight-a.weight);
+  const totalWeight = stacked.reduce((s,r)=>s+r.weight, 0);
+  const confidence = totalWeight>=30 ? 'High' : totalWeight>=14 ? 'Medium' : stacked.length ? 'Low' : 'None';
+  return {play:chosenPlay, reasons:stacked, lineupNotes, confidence, totalWeight};
+}
+// When 2+ independent signals land on the same player (e.g. hot AND a favorable matchup edge AND
+// a proven history vs this opponent), that's a materially stronger case than any one alone — don't
+// let them sit as separate, easy-to-miss bullet points. Merge them into one boosted entry so the
+// combination itself becomes visible, and re-rank with everything else afterward.
+function mergeStackedEvidence(reasons){
+  const byCap = {};
+  reasons.forEach(r=>{ if(r.capRef==null) return; (byCap[r.capRef] = byCap[r.capRef] || []).push(r); });
+  const stackedCaps = Object.entries(byCap).filter(([cap,list])=>list.length>=2);
+  if(stackedCaps.length===0) return reasons;
+  const consumed = new Set();
+  const merged = [];
+  stackedCaps.forEach(([cap, list])=>{
+    const maxWeight = Math.max(...list.map(r=>r.weight));
+    const boosted = Math.min(10, Math.round((maxWeight + 1.5)*10)/10);
+    merged.push({
+      text: `#${cap} has ${list.length} independent signals stacking up right now — ${list.map(r=>r.text).join(' ')}`,
+      weight: boosted, tag: 'Stacked evidence', capRef: cap
+    });
+    list.forEach(r=>consumed.add(r));
+  });
+  return merged.concat(reasons.filter(r=>!consumed.has(r)));
 }
 
 // When no rule fired a specific flag, don't just say "nothing to report" — fall back to the one
