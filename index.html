@@ -2230,7 +2230,7 @@ function buildPlayerEventLog(player){
     [1,2,3,4].forEach(q=>{
       (game.quarters[q]||[]).forEach(ev=>{
         if(ev.playerId!==player.id) return;
-        const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : (statDef(ev.stat_type)||{}).label || ev.stat_type;
+        const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : ((statDef(ev.stat_type)||{}).label || ev.stat_type) + (ev.manState?` (${ev.manState})`:'');
         rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:'Q'+q, time:fmtTime(ev.wall_time_offset_ms), score:null, event:eventLabel, against:'N/A' });
       });
     });
@@ -2348,7 +2348,11 @@ function tokenizeCapMentions(text, game){
     if(w!=='dark' && w!=='light') continue;
     let j = i+1;
     if(words[j]==='cap') j++;
-    const val = parseNumberWord(words[j]);
+    let val = parseNumberWord(words[j]);
+    // Web Speech API sometimes mishears "eight" as the bare article "a" in noisy audio. Only safe
+    // to special-case right here, immediately after a color word — nobody says "dark a" meaning
+    // anything else, but "a" alone elsewhere in a sentence is far too common to treat as a number.
+    if(val===null && words[j]==='a') val = 8;
     if(val===null) continue;
     const side = (w===ourColor) ? 'team' : 'opponent';
     let playerId = null;
@@ -2465,6 +2469,14 @@ function cleanNoteText(text){
 // attaching unrelated chatter to whoever was mentioned last would corrupt data worse than just
 // leaving a stray phrase visibly unmatched.
 const ACTOR_CARRY_FORWARD_MS = 7000;
+// A goal scored "on 6v5" (a man-up power play) is a materially different result than a natural,
+// even-strength goal — same stat_type, but worth tagging so the event log and any future
+// conversion-rate analysis can tell them apart instead of every goal looking identical.
+function detectManStateContext(text){
+  if(/\b6\s*v\s*5\b|\b6\s*on\s*5\b|\bsix\s*on\s*five\b|\bman[\s-]?up\b|\bpower\s*play\b/.test(text)) return '6v5';
+  if(/\b5\s*v\s*6\b|\b5\s*on\s*6\b|\bfive\s*on\s*six\b|\bman[\s-]?down\b|\bshort[\s-]?handed\b/.test(text)) return '5v6';
+  return null;
+}
 function parsePhrase(rawText, offsetMs){ const text=rawText.toLowerCase().trim().replace(/[.,!?]/g,''); if(/\b(undo|scratch that)\b/.test(text)) return {type:'undo'};
   const game = app.selectedGameId ? findGame(app.selectedGameId) : null;
   const mentions=findMentions(text); let actor1=mentions[0]||null; const actor2=mentions[1]||null; const base={wall_time_offset_ms:offsetMs, raw_phrase:rawText};
@@ -2476,7 +2488,12 @@ function parsePhrase(rawText, offsetMs){ const text=rawText.toLowerCase().trim()
   const normalizedText = cleanNoteText(text);
   let matchedKey=null; for(const p of PATTERN_INDEX){ if(text.includes(p.phrase) || normalizedText.includes(p.phrase)){ matchedKey=p.key; break; } }
   const carriedActor = (!actor1 && app.lastVoiceActor && (Date.now()-app.lastVoiceActorAt)<=ACTOR_CARRY_FORWARD_MS) ? app.lastVoiceActor : null;
-  if(matchedKey && (actor1||carriedActor)){ const who=actor1||carriedActor; return {type:'events', events:[{...base, playerId:who.playerId, playerCap:who.cap, side:who.side, stat_type:matchedKey}]}; }
+  if(matchedKey && (actor1||carriedActor)){
+    const who=actor1||carriedActor;
+    const ev = {...base, playerId:who.playerId, playerCap:who.cap, side:who.side, stat_type:matchedKey};
+    if(matchedKey==='goal'){ const manState = detectManStateContext(text); if(manState) ev.manState = manState; }
+    return {type:'events', events:[ev]};
+  }
   // No recognized stat, but a player WAS named — treat whatever's left as a free-text coach note
   // instead of discarding it. "dark 3 bad pass" or "light 5 too high in the lane" just work, no
   // fixed vocabulary needed.
@@ -2491,7 +2508,7 @@ function expandShotAttempts(events){ const extra=[]; events.forEach(ev=>{ if(ev.
 function eventLabelInfo(ev){
   if(ev.stat_type==='unmatched'){ return {text:`"${ev.raw_phrase}" — not recognized`, tone:'', cap:'—'}; }
   if(ev.stat_type==='note'){ const cap=ev.playerCap ? `#${ev.playerCap}` : '?'; return {text:`Note: ${ev.note||ev.raw_phrase}`, tone:'note', cap}; }
-  const def=statDef(ev.stat_type); const cap=ev.playerCap ? `#${ev.playerCap}` : '?'; return {text:def.label, tone:def.tone, cap};
+  const def=statDef(ev.stat_type); const cap=ev.playerCap ? `#${ev.playerCap}` : '?'; return {text:def.label+(ev.manState?` (${ev.manState})`:''), tone:def.tone, cap};
 }
 
 function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); if(!game) return; if(!app.quarterStart[app.currentQ]) app.quarterStart[app.currentQ]=Date.now(); const offset=Date.now()-app.quarterStart[app.currentQ]; const result=parsePhrase(rawText, offset);
