@@ -114,19 +114,25 @@
   .team-label .tag{font-family:'JetBrains Mono'; font-size:11px; padding:3px 8px; border-radius:999px; background:var(--bg-deep); color:var(--text-faint);}
   .data-row{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:12px;}
   .stats-grid{display:grid; grid-template-columns:repeat(3, minmax(120px,1fr)); gap:14px; margin-top:14px;}
-  .scoreboard{display:grid; grid-template-columns:1.4fr .9fr; gap:18px; align-items:start; margin-top:12px;}
-  .score-panel{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
-  .score-card{border:1px solid rgba(255,255,255,.12); border-radius:18px; padding:18px; display:flex; flex-direction:column; justify-content:space-between; gap:16px; min-height:150px; position:relative; overflow:hidden;}
+  .scoreboard{display:flex; flex-direction:column; gap:14px; margin-top:12px;}
+  .score-panel{display:grid; grid-template-columns:1fr auto 1fr; gap:14px; align-items:stretch; position:relative;}
+  .score-panel::after{content:'—'; grid-column:2; align-self:center; color:var(--text-faint); font-size:13px; font-weight:700; letter-spacing:.08em;}
+  .score-card{border:1px solid rgba(255,255,255,.12); border-radius:18px; padding:18px; display:flex; flex-direction:column; justify-content:space-between; gap:16px; min-height:150px; position:relative; overflow:hidden; transition:transform .15s;}
   .score-card-icon{position:absolute; right:-20px; bottom:-24px; pointer-events:none; transform:rotate(-8deg); opacity:.5;}
   .score-card > *:not(.score-card-icon){position:relative; z-index:1;}
   .score-card .score-top{display:flex; align-items:center; gap:10px; min-width:0;}
   .score-card .score-names{min-width:0; overflow:hidden;}
   .score-card .score-label{font-size:14px; font-weight:700; color:var(--text); line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .score-card .score-mascot{font-size:11px; color:var(--text-faint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .score-card .score-value{font-size:52px; font-weight:800; line-height:1; color:var(--text); text-shadow:0 2px 12px rgba(0,0,0,.35); text-align:right;}
-  .score-tile{background:var(--surface-2); border:1px solid var(--line); border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:8px;}
-  .score-tile span{font-size:12px; color:var(--text-faint);}
-  .score-tile strong{font-size:20px;}
+  .score-card .score-value{font-size:56px; font-weight:800; line-height:1; color:var(--text); text-shadow:0 2px 12px rgba(0,0,0,.35); text-align:right; font-family:'JetBrains Mono', monospace; font-variant-numeric:tabular-nums;}
+  .score-strip{display:flex; background:var(--surface-2); border:1px solid var(--line); border-radius:14px; overflow:hidden;}
+  .score-strip-cell{flex:1; padding:12px 16px; display:flex; flex-direction:column; gap:5px; border-right:1px solid var(--line-soft);}
+  .score-strip-cell:last-child{border-right:none;}
+  .score-strip-cell span{font-size:11px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em;}
+  .score-strip-cell strong{font-size:18px; display:flex; align-items:center; gap:7px;}
+  .live-dot{display:none; width:8px; height:8px; border-radius:50%; background:var(--good); box-shadow:0 0 0 0 rgba(74,222,128,.6); animation:live-pulse 1.6s infinite;}
+  .live-dot.on{display:inline-block;}
+  @keyframes live-pulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.55);} 70%{box-shadow:0 0 0 7px rgba(74,222,128,0);} 100%{box-shadow:0 0 0 0 rgba(74,222,128,0);}}
   .team-badge, .team-logo-preview{width:64px; height:64px; min-width:64px; border-radius:18px; overflow:hidden; background:linear-gradient(135deg, rgba(0,168,255,.12), rgba(255,122,89,.12)); display:flex; align-items:center; justify-content:center; border:1px solid var(--line);}
   .mascot-banner{position:relative; overflow:hidden; border-radius:18px; padding:26px 28px; min-height:130px; display:flex; align-items:center; border:1px solid rgba(255,255,255,.15); box-shadow:0 10px 30px -12px rgba(0,0,0,.5);}
   .mascot-banner.sm{padding:16px 18px; min-height:88px; border-radius:14px;}
@@ -209,7 +215,7 @@
   .ev.unmatched{border-style:dashed; color:var(--text-faint);}
   .mini-select{background:var(--bg-deep);border:1px solid var(--line);color:var(--text);border-radius:5px;font-size:12px;padding:8px 10px;font-family:'Inter';}
   @media (max-width:880px){.section-grid{grid-template-columns:1fr;}.form-row{grid-template-columns:1fr;}.data-row{flex-direction:column; align-items:flex-start;}.appbar-row{flex-direction:column; align-items:flex-start;}}
-  @media (max-width:640px){.scoreboard{grid-template-columns:1fr;}.score-panel{grid-template-columns:1fr;}.score-card{min-height:auto;}.score-card .score-value{font-size:44px;}}
+  @media (max-width:640px){.score-panel{grid-template-columns:1fr;}.score-panel::after{display:none;}.score-card{min-height:auto;}.score-card .score-value{font-size:44px;}.score-strip{flex-direction:column;}.score-strip-cell{border-right:none;border-bottom:1px solid var(--line-soft);}.score-strip-cell:last-child{border-bottom:none;}}
 
   /* ---------- Tactics board ---------- */
   .manstate-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-family:'JetBrains Mono';font-size:11px;letter-spacing:.06em;border:1px solid var(--line);color:var(--text-dim);}
@@ -243,17 +249,27 @@
   .play-item .ptags{font-size:10px;color:var(--cyan);letter-spacing:.06em;margin:2px 0;text-transform:uppercase;}
   .play-item .pdesc{font-size:11.5px;color:var(--text-dim);line-height:1.4;}
   .play-item button{background:none;border:none;color:var(--bad);font-size:11px;cursor:pointer;float:right;}
-  .rec-box{background:var(--surface-2);border:1px solid var(--lane);border-radius:var(--radius-md);padding:16px;}
-  .rec-play{font-size:18px;font-weight:800;color:var(--lane);margin-bottom:4px;}
-  .rec-sub{font-size:11.5px;color:var(--text-dim);margin-bottom:12px;}
-  .rec-list{list-style:none;padding:0;margin:0 0 12px;}
-  .rec-list li{font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line-soft);}
+  .rec-box{background:var(--surface-2);border:1px solid var(--lane);border-radius:var(--radius-md);padding:20px;box-shadow:0 8px 28px rgba(0,0,0,.22);}
+  .rec-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:2px;}
+  .rec-play{font-size:19px;font-weight:800;color:var(--lane);margin-bottom:4px;letter-spacing:-.01em;}
+  .rec-sub{font-size:12px;color:var(--text-dim);margin-bottom:0;}
+  .conf-badge{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.03em;white-space:nowrap;border:1px solid;}
+  .conf-badge .conf-dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+  .conf-badge.high{color:var(--good);border-color:rgba(74,222,128,.35);background:rgba(74,222,128,.08);}
+  .conf-badge.high .conf-dot{background:var(--good);box-shadow:0 0 8px rgba(74,222,128,.7);}
+  .conf-badge.medium{color:var(--lane);border-color:rgba(242,201,76,.35);background:rgba(242,201,76,.08);}
+  .conf-badge.medium .conf-dot{background:var(--lane);box-shadow:0 0 8px rgba(242,201,76,.6);}
+  .conf-badge.low{color:var(--text-faint);border-color:var(--line);background:var(--bg-deep);}
+  .conf-badge.low .conf-dot{background:var(--text-faint);}
+  .rec-list{list-style:none;padding:0;margin:14px 0 0;}
+  .rec-list li{font-size:12.5px;padding:7px 0;border-bottom:1px solid var(--line-soft);}
   .rec-list li b{color:var(--lane);}
-  .rec-why{font-size:13px;line-height:1.6;background:var(--surface);border-radius:var(--radius-sm);padding:12px;margin-top:8px;}
-  .rec-why .lbl{font-size:10px;color:var(--lane);letter-spacing:.1em;margin-bottom:6px;display:block;text-transform:uppercase;}
-  .rec-why-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;}
-  .rec-why-list li{padding-left:16px;position:relative;}
-  .rec-why-list li::before{content:'●';position:absolute;left:0;top:0;color:var(--lane);font-size:8px;line-height:1.9;}
+  .rec-why{font-size:13px;line-height:1.6;background:var(--surface);border-radius:var(--radius-sm);padding:14px;margin-top:12px;}
+  .rec-why .lbl{font-size:10px;color:var(--lane);letter-spacing:.1em;margin-bottom:10px;display:block;text-transform:uppercase;}
+  .rec-why-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px;}
+  .rec-why-list li{padding-left:0;position:relative;border-left:2px solid var(--line);padding-left:12px;}
+  .reason-tag{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--lane);background:var(--lane-dim);border-radius:5px;padding:2px 7px;margin-right:8px;vertical-align:middle;}
+  .rec-hidden-note{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line-soft);font-size:11px;color:var(--text-faint);}
   .rec-empty{color:var(--text-faint);font-size:13px;}
   .hist-item{border-left:2px solid var(--line);padding:6px 0 6px 10px;margin-bottom:8px;font-size:11.5px;color:var(--text-dim);}
   .hist-item .hh{color:var(--text);font-weight:700;font-size:12px;}
@@ -634,10 +650,10 @@
               <div class="score-card" id="teamScoreCard"></div>
               <div class="score-card" id="oppScoreCard"></div>
             </div>
-            <div class="score-extras">
-              <div class="score-tile"><span>Status</span><strong id="boxStatus">Upcoming</strong></div>
-              <div class="score-tile"><span>Period</span><strong id="boxPeriod">Q1</strong></div>
-              <div class="score-tile"><span>Events</span><strong id="boxEventCount">0</strong></div>
+            <div class="score-strip">
+              <div class="score-strip-cell"><span>Status</span><strong id="boxStatus"><span class="live-dot" id="liveDot"></span>Upcoming</strong></div>
+              <div class="score-strip-cell"><span>Period</span><strong id="boxPeriod">Q1</strong></div>
+              <div class="score-strip-cell"><span>Events</span><strong id="boxEventCount">0</strong></div>
             </div>
           </div>
           <div id="gameQuarterTabs" style="margin-top:18px; display:flex; gap:8px; flex-wrap:wrap;"></div>
@@ -652,6 +668,7 @@
                 <button class="primary-btn action-btn" id="micBtn" onclick="toggleMic()">Start listening</button>
                 <span class="pill" id="micStatus">Mic off</span>
                 <button class="ghost-btn" id="undoBtn" onclick="undoEvent()" disabled>Undo last</button>
+                <button class="ghost-btn" id="finalizeBtn" onclick="toggleGameFinal()" style="margin-left:auto;"></button>
               </div>
               <div class="form-row">
                 <div>
@@ -696,7 +713,10 @@
               <ul id="gameRosterList" class="minimal-list"></ul>
             </div>
             <div class="panel">
-              <h2>Game stats</h2>
+              <div class="data-row">
+                <h2>Game stats</h2>
+                <button class="ghost-btn" id="gameStatsToggle" style="display:none;font-size:11px;padding:6px 12px;"></button>
+              </div>
               <div class="table-wrap"><table class="stats" id="gameStatsTable"></table></div>
             </div>
             <div class="panel">
@@ -1363,7 +1383,7 @@ function renderTeam(){ const team = findTeam(app.selectedTeamId); if(!team){ nav
   if(teamGames.length===0){ teamGamesList.innerHTML='<li class="item" style="color:var(--text-faint);">No games scheduled for this team.</li>'; }
   teamGames.forEach(game=>{
     const li=document.createElement('li'); li.className='item';
-    li.innerHTML = `<strong>${game.date || 'TBD'} vs ${game.opponent || 'Opp'} </strong><div class="entity-meta"><span>${game.time || ''}</span><span>${game.location || ''}</span><span>${game.status}</span></div><div class="actions"></div>`;
+    li.innerHTML = `<strong>${game.date || 'TBD'} vs ${game.opponent || 'Opp'} </strong><div class="entity-meta"><span>${game.time || ''}</span><span>${game.location || ''}</span><span>${gameDisplayStatus(game)}</span></div><div class="actions"></div>`;
     const viewBtn=document.createElement('button'); viewBtn.className='ghost-btn'; viewBtn.textContent='View'; viewBtn.onclick=()=>navigate('game', game.id, {manage:false});
     const manageBtn=document.createElement('button'); manageBtn.className='primary-btn action-btn'; manageBtn.textContent='Manage'; manageBtn.onclick=()=>navigate('game', game.id, {manage:true});
     li.querySelector('.actions').appendChild(viewBtn); li.querySelector('.actions').appendChild(manageBtn);
@@ -1898,7 +1918,7 @@ function renderGames(){ const list = document.getElementById('gameList'); list.i
   app.games.sort((a,b)=> (a.date||'').localeCompare(b.date||'')).forEach(game=>{
     const team = findTeam(game.teamId);
     const li=document.createElement('li'); li.className='item';
-    li.innerHTML = `<strong>${team?team.name:'Team'} vs ${game.opponent}</strong><div class="entity-meta"><span>${game.date || 'TBD'}</span><span>${game.time || ''}</span><span>${game.status}</span></div><div class="actions"></div>`;
+    li.innerHTML = `<strong>${team?team.name:'Team'} vs ${game.opponent}</strong><div class="entity-meta"><span>${game.date || 'TBD'}</span><span>${game.time || ''}</span><span>${gameDisplayStatus(game)}</span></div><div class="actions"></div>`;
     const viewBtn=document.createElement('button'); viewBtn.className='ghost-btn'; viewBtn.textContent='Open viewer'; viewBtn.onclick=()=>navigate('game', game.id, {manage:false});
     const manageBtn=document.createElement('button'); manageBtn.className='primary-btn action-btn'; manageBtn.textContent='Manage'; manageBtn.onclick=()=>navigate('game', game.id, {manage:true});
     li.querySelector('.actions').appendChild(viewBtn); li.querySelector('.actions').appendChild(manageBtn);
@@ -1920,9 +1940,13 @@ function renderGame(){ const game = findGame(app.selectedGameId); if(!game){ nav
   const oppBrand = findOpponentBranding(game.opponent);
   renderScoreCard('teamScoreCard', ourBrand, score.team);
   renderScoreCard('oppScoreCard', oppBrand, score.opponent);
-  document.getElementById('boxStatus').textContent = game.status;
+  const displayStatus = gameDisplayStatus(game);
+  const isLive = displayStatus==='In progress';
+  document.getElementById('boxStatus').innerHTML = `<span class="live-dot${isLive?' on':''}" id="liveDot"></span>${displayStatus}`;
   document.getElementById('boxPeriod').textContent = `Q${app.currentQ}`;
   document.getElementById('boxEventCount').textContent = getGameEvents(game).length;
+  const finalizeBtn = document.getElementById('finalizeBtn');
+  if(finalizeBtn) finalizeBtn.textContent = game.status==='final' ? 'Reopen game' : 'Mark game final';
   // only show controls if in manage mode AND current user has permission
   const controlsVisible = (app.manageMode && hasManagePermission(game));
   document.getElementById('gameControlsPanel').style.display = controlsVisible ? 'block' : 'none';
@@ -1985,18 +2009,34 @@ function renderGameFeed(game){ const el=document.getElementById('gameFeed'); con
   document.getElementById('undoBtn').disabled=false;
 }
 
+// Live game stats: a 24-row table where 20 rows are all dashes is unreadable mid-game — only
+// players who've actually recorded something get a row by default, with a toggle to reveal the
+// full roster (e.g. to double-check a bench player genuinely has nothing yet).
 function renderGameStats(game){ const table=document.getElementById('gameStatsTable'); const roster=getGameRoster(game);
   const allEvents = getGameEvents(game).filter(e=>e.stat_type!=='unmatched');
   const head = '<thead><tr><th style="text-align:left;">Player</th>'+STAT_DEFS.map(d=>`<th>${d.short}</th>`).join('')+'<th>SH%</th></tr></thead>';
-  const rows = roster.map(player=>{
+  const pctOf = (goals, attempts) => attempts ? Math.min(100, Math.round((goals/attempts)*100)) + '%' : '—';
+  const withCounts = roster.map(player=>{
     const counts = STAT_DEFS.map(def=>allEvents.filter(e=>e.playerId===player.id && e.stat_type===def.key).length);
-    const shPct = counts[1] ? Math.round((counts[0]/counts[1])*100) + '%' : '—';
+    return { player, counts, active: counts.some(c=>c>0) };
+  });
+  const inactiveCount = withCounts.filter(r=>!r.active).length;
+  const showAll = !!(table.dataset && table.dataset.showAll==='1');
+  const visible = showAll ? withCounts : withCounts.filter(r=>r.active);
+  const rows = visible.map(({player,counts})=>{
+    const shPct = pctOf(counts[0], counts[1]);
     return `<tr><td class="pcell">#${player.cap} ${player.name||''}</td>` + counts.map(c=>`<td>${c||''}</td>`).join('') + `<td class="shpct">${shPct}</td></tr>`;
   }).join('');
   const totals = STAT_DEFS.map(def=>allEvents.filter(e=>e.stat_type===def.key).length);
-  const totalPct = totals[1] ? Math.round((totals[0]/totals[1])*100) + '%' : '—';
+  const totalPct = pctOf(totals[0], totals[1]);
   const totalRow = `<tr class="total"><td class="pcell">Team total</td>${totals.map(c=>`<td>${c}</td>`).join('')}<td>${totalPct}</td></tr>`;
   table.innerHTML = head + '<tbody>' + (rows || `<tr><td colspan="${STAT_DEFS.length+2}" style="color:var(--text-faint);">No player stats yet.</td></tr>`) + totalRow + '</tbody>';
+  const toggle = document.getElementById('gameStatsToggle');
+  if(toggle){
+    toggle.style.display = inactiveCount>0 ? 'inline-flex' : 'none';
+    toggle.textContent = showAll ? `Hide players with no stats (${inactiveCount})` : `Show full roster (${inactiveCount} with no stats yet)`;
+    toggle.onclick = ()=>{ table.dataset.showAll = showAll ? '0' : '1'; renderGameStats(game); };
+  }
 }
 
 function renderManualSelectors(game){ const playerSelect = document.getElementById('manualPlayerSelect'); playerSelect.innerHTML = ''; const roster = getGameRoster(game);
@@ -2246,6 +2286,13 @@ function renderPlayerEventLog(player){
 }
 
 function computeGameScore(game){ const all = getGameEvents(game); const teamGoals = all.filter(ev=>ev.stat_type==='goal' && (ev.side||'team')==='team').length; const oppGoals = all.filter(ev=>ev.stat_type==='goal' && ev.side==='opponent').length; return {team:teamGoals, opponent:oppGoals}; }
+// game.status was only ever written once, at creation, to 'upcoming' — there's never been a code
+// path that updates it, so every game showed "Upcoming" forever, live or finished. Derive the real
+// state instead: explicit 'final' wins, otherwise any logged event means it's actually in progress.
+function gameDisplayStatus(game){
+  if(game.status==='final') return 'Final';
+  return getGameEvents(game).length>0 ? 'In progress' : 'Upcoming';
+}
 function fmtTime(ms){ return typeof ms==='number' ? new Date(ms).toISOString().substr(14,5) : '--:--'; }
 
 // ---- Voice mention resolution ----
@@ -2519,6 +2566,11 @@ function undoEvent(){
   } else {
     q.pop();
   }
+  saveState(); renderGame();
+}
+function toggleGameFinal(){
+  const game=findGame(app.selectedGameId); if(!game) return;
+  game.status = game.status==='final' ? 'upcoming' : 'final';
   saveState(); renderGame();
 }
 
@@ -3027,6 +3079,62 @@ function ownSeasonSeries(game){
   return { count:priors.length, wins, losses, results };
 }
 
+// Season shooting efficiency — goals per shot attempt. Gated at 3+ attempts so a 1-for-1 game
+// doesn't masquerade as a "100% shooter"; below that, treat it as no signal rather than a lie.
+function seasonShootingPct(playerId){
+  const goals = seasonStat(playerId, 'goal');
+  const attempts = seasonStat(playerId, 'shot_attempt');
+  if(attempts < 3) return null;
+  return { goals, attempts, pct: goals/attempts };
+}
+// Full-game exclusion differential (not just the last-6-event momentum window) — a steadier read
+// on which team is controlling the whistle over the whole game so far.
+function fullGameFoulDifferential(game){
+  const events = getGameEvents(game).filter(ev=>ev.stat_type);
+  const drawn = events.filter(ev=>ev.stat_type==='exclusion_drawn' && (ev.side||'team')==='team').length;
+  const given = events.filter(ev=>ev.stat_type==='exclusion' && (ev.side||'team')==='team').length;
+  return { drawn, given, diff: drawn-given };
+}
+// A single number summarizing how much a player should be trusted with the ball right now, built
+// from weighted real stats: season output, recent hot/cold form, career production against this
+// exact opponent, breakout-game history, season shooting efficiency, and live foul/fatigue risk.
+// This replaces "the coach's gut" with something specific and comparable between two players —
+// the whole point being that a substitution call cites a number, not a vibe.
+function computePlayerValueScore(p, oppContext){
+  let score = 0; const breakdown = [];
+  const seasonGoals = p.seasonGoals || 0;
+  if(seasonGoals){ score += seasonGoals * 1.0; breakdown.push(`${seasonGoals} season G`); }
+  if(p.form){
+    if(p.form.hot){ score += 4; breakdown.push(`hot (avg ${p.form.recentAvg.toFixed(1)} last ${p.form.ofLastN} vs season ${p.form.overallAvg.toFixed(1)})`); }
+    if(p.form.cold){ score -= 3; breakdown.push(`cold (scoreless last ${p.form.ofLastN})`); }
+  }
+  if(p.careerVsOpp && p.careerVsOpp.goals){ score += p.careerVsOpp.goals * 1.5; breakdown.push(`${p.careerVsOpp.goals}G vs this opponent`); }
+  if(p.bigGames && p.bigGames.length){ score += 1.5; breakdown.push('breakout-game history'); }
+  const shooting = seasonShootingPct(p.id);
+  if(shooting){ const delta = shooting.pct - 0.35; score += delta * 10; breakdown.push(`${Math.round(shooting.pct*100)}% shooting (${shooting.goals}/${shooting.attempts})`); }
+  if(p.gameExGiven>=2){ score -= 3; breakdown.push('2 exclusions already this game'); }
+  if(p.fatigue==='High'){ score -= 2; breakdown.push('high fatigue'); }
+  const noteFlag = p.noteFlags && p.noteFlags[0];
+  if(noteFlag && noteFlag.count>=2){ score -= Math.min(noteFlag.count, 4); breakdown.push(`flagged "${noteFlag.text}" ${noteFlag.count}x recently`); }
+  return { score: Math.round(score*10)/10, breakdown };
+}
+// Compare every on-field player against same-role bench players using the value score above, and
+// only surface a swap when the gap is large enough to be a real signal (>=3.0), not roster noise.
+// Replaces three separate one-off "is someone hot on the bench" checks with one ranked comparison.
+function findBestRoleSwaps(sit){
+  const swaps = [];
+  sit.onField.forEach(onP=>{
+    if(!onP.wpPosition || onP.wpPosition==='GK') return;
+    const onScore = computePlayerValueScore(onP, sit.oppContext);
+    sit.bench.filter(b=>b.wpPosition===onP.wpPosition).forEach(benchP=>{
+      const benchScore = computePlayerValueScore(benchP, sit.oppContext);
+      const gap = Math.round((benchScore.score - onScore.score)*10)/10;
+      if(gap >= 3){ swaps.push({ onP, benchP, onScore, benchScore, gap }); }
+    });
+  });
+  return swaps.sort((a,b)=>b.gap-a.gap);
+}
+
 function buildTacticsSituation(game){
   const roster = getGameRoster(game);
   const our = game.tacticalTokens.filter(t=>t.side==='our' && !t.excluded);
@@ -3064,83 +3172,88 @@ function buildTacticsSituation(game){
       careerVsOpp: careerFor(oppContext, p.name), goalsVsCurrentGoalie: oppGoalieEntry ? careerGoalsVsGoalie(oppContext, p.name, oppGoalieEntry.name) : 0,
       form: computeStreak(ownLog), bigGames: findBigGames(ownLog), noteFlags: buildPlayerNoteTally(p, 5) };
   });
-  return {manstate, manCount, scoreUs:score.team, scoreOpp:score.opponent, diff:score.team-score.opponent, quarter:app.currentQ, notes, matchups, onField, bench, momentum: computeMomentum(game), oppContext, seasonSeries: ownSeasonSeries(game), oppGoalieName: oppGoalieEntry ? oppGoalieEntry.name : null, opponentToday: analyzeOpponentToday(game)};
+  return {manstate, manCount, scoreUs:score.team, scoreOpp:score.opponent, diff:score.team-score.opponent, quarter:app.currentQ, notes, matchups, onField, bench, momentum: computeMomentum(game), oppContext, seasonSeries: ownSeasonSeries(game), oppGoalieName: oppGoalieEntry ? oppGoalieEntry.name : null, opponentToday: analyzeOpponentToday(game), foulDifferential: fullGameFoulDifferential(game)};
 }
 
+// Every signal below is pushed as {text, weight, tag} instead of a bare string. Weight is a rough
+// 1-10 "how much should this move the conversation" score — explicit coach input and foul-trouble
+// urgency sit at the top, ambient season-series context sits at the bottom. tacticsRuleEngine sorts
+// by weight and the caller decides how many to actually show, which is what makes the output
+// "picky" instead of a flat wall of everything that happened to match.
 function tacticsRuleEngine(sit, game){
   const reasons=[]; const lineupNotes=[];
+  const push = (text, weight, tag) => reasons.push({text, weight, tag});
 
-  if(sit.notes) reasons.push(`Coach note for this situation: "${sit.notes}"`);
+  if(sit.notes) push(`Coach note for this situation: "${sit.notes}"`, 10, 'Coach input');
 
   // --- Current situation: who's in foul/fatigue trouble right now ---
   sit.onField.forEach(p=>{
     if(p.gameExGiven>=2){
-      reasons.push(`#${p.cap} ${p.name||''} has 2 exclusions already this game — one more and they're out for the rest of the game. Consider subbing.`);
+      push(`#${p.cap} ${p.name||''} has 2 exclusions already this game — one more and they're out for the rest of the game. Consider subbing.`, 9, 'Foul trouble');
       const bestBench = [...sit.bench].sort((a,b)=>(b.seasonExDrawn-b.seasonExGiven)-(a.seasonExDrawn-a.seasonExGiven))[0];
       if(bestBench) lineupNotes.push(`Sub #${bestBench.cap} ${bestBench.name||''} in for #${p.cap} ${p.name||''} (foul trouble).`);
     }
-    if(p.fatigue==='High') reasons.push(`#${p.cap} ${p.name||''} is flagged High fatigue.`);
+    if(p.fatigue==='High') push(`#${p.cap} ${p.name||''} is flagged High fatigue.`, 5, 'Fatigue');
   });
 
   let candidatePlays = app.plays.filter(p=>p.tags.toLowerCase().includes(sit.manstate));
   if(candidatePlays.length===0) candidatePlays = app.plays;
   const chosenPlay = candidatePlays[0] || {name:'No play matched', desc:'Add plays to the library for this situation.'};
 
-  if(sit.manstate==='man-up') reasons.push('We have an extra player in the water — run a set 6v5 rather than free-lancing.');
-  if(sit.manstate==='man-down') reasons.push('We are down a player — priority is denying the high-percentage shot, not the steal.');
-  if(sit.diff<0 && sit.quarter>=3) reasons.push(`We're down ${Math.abs(sit.diff)} in Q${sit.quarter} — favor higher-tempo options over ball control.`);
-  if(sit.diff>0 && sit.quarter>=3) reasons.push(`We're up ${sit.diff} in Q${sit.quarter} — favor clock control and safe offense.`);
+  if(sit.manstate==='man-up') push('We have an extra player in the water — run a set 6v5 rather than free-lancing.', 6, 'Man-state');
+  if(sit.manstate==='man-down') push('We are down a player — priority is denying the high-percentage shot, not the steal.', 6, 'Man-state');
+  if(sit.diff<0 && sit.quarter>=3) push(`We're down ${Math.abs(sit.diff)} in Q${sit.quarter} — favor higher-tempo options over ball control.`, 6, 'Score/quarter');
+  if(sit.diff>0 && sit.quarter>=3) push(`We're up ${sit.diff} in Q${sit.quarter} — favor clock control and safe offense.`, 6, 'Score/quarter');
 
   // --- Momentum: what actually just happened in this game's event log ---
   const m = sit.momentum;
   if(m){
-    if(m.streakSide==='opponent' && m.streakCount>=2) reasons.push(`Opponent has scored ${m.streakCount} unanswered — call a timeout and reset the defense before this run grows.`);
-    if(m.streakSide==='team' && m.streakCount>=2) reasons.push(`We're on a ${m.streakCount}-0 run — keep this lineup in, don't disrupt momentum.`);
-    if(m.exGiven>=2) reasons.push(`We've drawn ${m.exGiven} exclusion calls in the last ${m.recentCount} events — tighten up positioning, the refs are calling it close right now.`);
-    if(m.turnovers>=2) reasons.push(`${m.turnovers} turnovers in the last stretch — simplify to the first clean look instead of forcing the extra pass.`);
+    if(m.streakSide==='opponent' && m.streakCount>=2) push(`Opponent has scored ${m.streakCount} unanswered — call a timeout and reset the defense before this run grows.`, 8, 'Live momentum');
+    if(m.streakSide==='team' && m.streakCount>=2) push(`We're on a ${m.streakCount}-0 run — keep this lineup in, don't disrupt momentum.`, 5, 'Live momentum');
+    if(m.exGiven>=2) push(`We've drawn ${m.exGiven} exclusion calls in the last ${m.recentCount} events — tighten up positioning, the refs are calling it close right now.`, 6, 'Live momentum');
+    if(m.turnovers>=2) push(`${m.turnovers} turnovers in the last stretch — simplify to the first clean look instead of forcing the extra pass.`, 6, 'Live momentum');
+  }
+  // --- Full-game foul differential — a steadier read than the last-6-event momentum window ---
+  const fd = sit.foulDifferential;
+  if(fd && Math.abs(fd.diff)>=3){
+    if(fd.diff>0) push(`We're drawing exclusions at a real clip today: ${fd.drawn} drawn vs ${fd.given} given for the whole game — the whistle favors driving into contact right now.`, 5, 'Full-game stats');
+    else push(`We're being out-disciplined today: ${fd.given} exclusions given vs only ${fd.drawn} drawn for the whole game — tighten defensive positioning, this isn't a one-off.`, 6, 'Full-game stats');
   }
 
   // --- Scouted weakness on the current matchup ---
   const exploitable = sit.matchups.find(m=>m.oppNote && /weak|slow|foul|tired/i.test(m.oppNote));
-  if(exploitable) reasons.push(`${exploitable.our} is matched on ${exploitable.opp}, scouted as: "${exploitable.oppNote}" — attack that matchup.`);
+  if(exploitable) push(`${exploitable.our} is matched on ${exploitable.opp}, scouted as: "${exploitable.oppNote}" — attack that matchup.`, 7, 'Scouting');
 
   // --- Own recent form: hot/cold streaks and breakout-game history, from this team's own game log ---
   const hotPlayer = sit.onField.find(p=>p.form && p.form.hot);
-  if(hotPlayer) reasons.push(`#${hotPlayer.cap} ${hotPlayer.name||''} is hot — scored in ${hotPlayer.form.scoredInLastN} of their last ${hotPlayer.form.ofLastN} games (avg ${hotPlayer.form.recentAvg.toFixed(1)} vs season avg ${hotPlayer.form.overallAvg.toFixed(1)}) — keep riding them.`);
+  if(hotPlayer) push(`#${hotPlayer.cap} ${hotPlayer.name||''} is hot — scored in ${hotPlayer.form.scoredInLastN} of their last ${hotPlayer.form.ofLastN} games (avg ${hotPlayer.form.recentAvg.toFixed(1)} vs season avg ${hotPlayer.form.overallAvg.toFixed(1)}) — keep riding them.`, 6, 'Form');
   const coldPlayer = sit.onField.find(p=>p.form && p.form.cold);
-  if(coldPlayer) reasons.push(`#${coldPlayer.cap} ${coldPlayer.name||''} has gone scoreless the last ${coldPlayer.form.ofLastN} games (season avg ${coldPlayer.form.overallAvg.toFixed(1)}) — consider a different look or matchup for them.`);
+  if(coldPlayer) push(`#${coldPlayer.cap} ${coldPlayer.name||''} has gone scoreless the last ${coldPlayer.form.ofLastN} games (season avg ${coldPlayer.form.overallAvg.toFixed(1)}) — consider a different look or matchup for them.`, 5, 'Form');
   const bigGamePlayer = sit.onField.find(p=>p.bigGames && p.bigGames.length>0);
   if(bigGamePlayer){
     const bg = bigGamePlayer.bigGames[bigGamePlayer.bigGames.length-1];
-    reasons.push(`#${bigGamePlayer.cap} ${bigGamePlayer.name||''} has had breakout games before (${bg.goals}G on ${bg.date}) — capable of taking a game over.`);
+    push(`#${bigGamePlayer.cap} ${bigGamePlayer.name||''} has had breakout games before (${bg.goals}G on ${bg.date}) — capable of taking a game over.`, 4, 'Form');
   }
+  // --- Season shooting efficiency among on-field players — a real quantitative edge, not a hunch ---
+  const efficientShooter = sit.onField.map(p=>({p, shooting: seasonShootingPct(p.id)})).filter(x=>x.shooting && x.shooting.pct>=0.45).sort((a,b)=>b.shooting.pct-a.shooting.pct)[0];
+  if(efficientShooter) push(`#${efficientShooter.p.cap} ${efficientShooter.p.name||''} is shooting ${Math.round(efficientShooter.shooting.pct*100)}% this season (${efficientShooter.shooting.goals}/${efficientShooter.shooting.attempts}) — a clearly above-average look, worth the extra pass to set it up.`, 5, 'Shooting efficiency');
 
-  // --- Should someone else be in? Three independent bench signals, checked every time: a hot
-  // streak sitting on the bench, a proven scorer specifically against this opponent who isn't
-  // playing, and a same-role production gap. Each is real evidence, not a guess.
-  const hotBenchPlayer = sit.bench.find(p=>p.form && p.form.hot);
-  if(hotBenchPlayer){
-    const sameRole = sit.onField.find(p=>p.wpPosition && p.wpPosition===hotBenchPlayer.wpPosition && (p.wpPosition||'')!=='GK');
-    reasons.push(`#${hotBenchPlayer.cap} ${hotBenchPlayer.name||''} is on the bench but hot — scored in ${hotBenchPlayer.form.scoredInLastN} of their last ${hotBenchPlayer.form.ofLastN} games (avg ${hotBenchPlayer.form.recentAvg.toFixed(1)} vs season avg ${hotBenchPlayer.form.overallAvg.toFixed(1)}).${sameRole?` #${sameRole.cap} ${sameRole.name||''} plays the same role (${sameRole.wpPosition}) on the field right now — worth rotating them in.`:' Worth working them into the rotation.'}`);
-    if(sameRole) lineupNotes.push(`Consider #${hotBenchPlayer.cap} ${hotBenchPlayer.name||''} in for #${sameRole.cap} ${sameRole.name||''} — hot streak on the bench at the same role.`);
+  // --- Should someone else be in? One ranked, quantified comparison instead of three anecdotes —
+  // every on-field player is scored against same-role bench players and only a real gap (>=3.0)
+  // gets surfaced, with the exact number and what drove it shown so it's checkable, not a vibe.
+  const swaps = findBestRoleSwaps(sit);
+  if(swaps.length){
+    const top = swaps[0];
+    push(`#${top.benchP.cap} ${top.benchP.name||''} outscores #${top.onP.cap} ${top.onP.name||''} on value right now (${top.benchScore.score} vs ${top.onScore.score} at ${top.onP.wpPosition}) — driven by ${top.benchScore.breakdown.slice(0,2).join(', ') || 'season output'}${top.onScore.breakdown.length?` vs ${top.onP.name||'the current player'}'s ${top.onScore.breakdown.slice(0,2).join(', ')}`:''}. Worth the swap if the matchup isn't clicking.`, Math.min(9, 5+top.gap/2), 'Lineup value');
+    lineupNotes.push(`Consider #${top.benchP.cap} ${top.benchP.name||''} in for #${top.onP.cap} ${top.onP.name||''} — value score ${top.benchScore.score} vs ${top.onScore.score}.`);
+    if(swaps[1] && swaps[1].benchP.id!==top.benchP.id){
+      const s2 = swaps[1];
+      push(`Also worth a look: #${s2.benchP.cap} ${s2.benchP.name||''} over #${s2.onP.cap} ${s2.onP.name||''} (${s2.benchScore.score} vs ${s2.onScore.score} at ${s2.onP.wpPosition}).`, Math.min(7, 4+s2.gap/2), 'Lineup value');
+    }
   }
   const benchScorerVsOpp = [...sit.bench].filter(p=>p.careerVsOpp && p.careerVsOpp.goals>0).sort((a,b)=>b.careerVsOpp.goals-a.careerVsOpp.goals)[0];
-  if(benchScorerVsOpp && !hotBenchPlayer){
-    reasons.push(`#${benchScorerVsOpp.cap} ${benchScorerVsOpp.name||''} is on the bench but has ${benchScorerVsOpp.careerVsOpp.goals} goal(s) in ${benchScorerVsOpp.careerVsOpp.meetings} logged meeting(s) against this exact opponent — a proven weapon against them specifically, worth a look if the current matchups aren't producing.`);
-  }
-  let bestRoleSwap = null;
-  sit.onField.forEach(onP=>{
-    if((onP.wpPosition||'')==='GK' || !onP.wpPosition) return;
-    sit.bench.forEach(benchP=>{
-      if(benchP.wpPosition===onP.wpPosition && benchP.seasonGoals > onP.seasonGoals + 3){
-        const gap = benchP.seasonGoals - onP.seasonGoals;
-        if(!bestRoleSwap || gap>bestRoleSwap.gap) bestRoleSwap = {onP, benchP, gap};
-      }
-    });
-  });
-  if(bestRoleSwap){
-    reasons.push(`#${bestRoleSwap.benchP.cap} ${bestRoleSwap.benchP.name||''} is on the bench at the same role (${bestRoleSwap.benchP.wpPosition}) with ${bestRoleSwap.benchP.seasonGoals} season goals, well ahead of #${bestRoleSwap.onP.cap} ${bestRoleSwap.onP.name||''}'s ${bestRoleSwap.onP.seasonGoals} — a real production gap worth considering if the matchup isn't clicking.`);
-    lineupNotes.push(`Consider #${bestRoleSwap.benchP.cap} ${bestRoleSwap.benchP.name||''} in for #${bestRoleSwap.onP.cap} ${bestRoleSwap.onP.name||''} — clear season scoring gap at the same role.`);
+  if(benchScorerVsOpp && !swaps.some(s=>s.benchP.id===benchScorerVsOpp.id)){
+    push(`#${benchScorerVsOpp.cap} ${benchScorerVsOpp.name||''} is on the bench but has ${benchScorerVsOpp.careerVsOpp.goals} goal(s) in ${benchScorerVsOpp.careerVsOpp.meetings} logged meeting(s) against this exact opponent — a proven weapon against them specifically, worth a look if the current matchups aren't producing.`, 6, 'Lineup value');
   }
 
   // --- Recurring coach notes (e.g. repeated "bad pass" flags) from the last 5 games — real
@@ -3148,7 +3261,7 @@ function tacticsRuleEngine(sit, game){
   const flaggedPlayer = sit.onField.find(p=>p.noteFlags && p.noteFlags.length && p.noteFlags[0].count>=2);
   if(flaggedPlayer){
     const flag = flaggedPlayer.noteFlags[0];
-    reasons.push(`#${flaggedPlayer.cap} ${flaggedPlayer.name||''} has been flagged "${flag.text}" ${flag.count}x in recent games (last: ${flag.lastDate}) — worth accounting for in this situation.`);
+    push(`#${flaggedPlayer.cap} ${flaggedPlayer.name||''} has been flagged "${flag.text}" ${flag.count}x in recent games (last: ${flag.lastDate}) — worth accounting for in this situation.`, 6, 'Coach notes');
   }
 
   // --- How the opponent is actually playing THIS game, right now (live, not historical) ---
@@ -3156,11 +3269,11 @@ function tacticsRuleEngine(sit, game){
   if(today && today.scorers.length){
     const top = today.scorers[0];
     if(top.goals>=2 && today.oppScore>0 && top.goals/today.oppScore>=0.4){
-      reasons.push(`Today: ${top.name?('#'+top.cap+' '+top.name):('opponent #'+top.cap)} has scored ${top.goals} of their ${today.oppScore} goals so far — the primary threat right now, key on them.`);
+      push(`Today: ${top.name?('#'+top.cap+' '+top.name):('opponent #'+top.cap)} has scored ${top.goals} of their ${today.oppScore} goals so far — the primary threat right now, key on them.`, 7, 'Opponent live');
     }
     const topQ = Object.entries(top.quarters||{}).sort((a,b)=>b[1]-a[1])[0];
     if(topQ && today.oppScore>=3 && topQ[1]/today.oppScore>=0.5){
-      reasons.push(`Today: ${Math.round(topQ[1]/today.oppScore*100)}% of the opponent's goals so far have come in ${topQ[0]} — watch for that pattern repeating.`);
+      push(`Today: ${Math.round(topQ[1]/today.oppScore*100)}% of the opponent's goals so far have come in ${topQ[0]} — watch for that pattern repeating.`, 5, 'Opponent live');
     }
   }
 
@@ -3168,19 +3281,19 @@ function tacticsRuleEngine(sit, game){
   const provenScorer = [...sit.matchups].filter(mu=>mu.ourCareer && mu.ourCareer.goals>0).sort((a,b)=>b.ourCareer.goals-a.ourCareer.goals)[0];
   if(provenScorer){
     const tendency = describeSituationalTendency(provenScorer.situationalVsOpp);
-    reasons.push(`${provenScorer.our} has ${provenScorer.ourCareer.goals} goal(s) across ${provenScorer.ourCareer.meetings} logged meeting(s) vs this opponent — proven production, keep feeding them.${tendency?` Tends to score most ${tendency}.`:''}`);
+    push(`${provenScorer.our} has ${provenScorer.ourCareer.goals} goal(s) across ${provenScorer.ourCareer.meetings} logged meeting(s) vs this opponent — proven production, keep feeding them.${tendency?` Tends to score most ${tendency}.`:''}`, 7, 'Matchup history');
   }
   const blockedMatchup = sit.matchups.find(mu=>mu.blockedBy);
-  if(blockedMatchup) reasons.push(`${blockedMatchup.opp} has blocked ${blockedMatchup.our} before in this rivalry — look for the kick-out or pump-fake instead of a direct shot into that matchup.`);
+  if(blockedMatchup) push(`${blockedMatchup.opp} has blocked ${blockedMatchup.our} before in this rivalry — look for the kick-out or pump-fake instead of a direct shot into that matchup.`, 6, 'Matchup history');
   const stolenMatchup = sit.matchups.find(mu=>mu.stolenBy);
-  if(stolenMatchup) reasons.push(`${stolenMatchup.opp} has stripped/stolen the ball off ${stolenMatchup.our} before — protect the ball two-handed and don't force a pass into that matchup.`);
+  if(stolenMatchup) push(`${stolenMatchup.opp} has stripped/stolen the ball off ${stolenMatchup.our} before — protect the ball two-handed and don't force a pass into that matchup.`, 6, 'Matchup history');
   const goalieThreat = [...sit.onField].filter(p=>p.goalsVsCurrentGoalie>0).sort((a,b)=>b.goalsVsCurrentGoalie-a.goalsVsCurrentGoalie)[0];
-  if(goalieThreat) reasons.push(`#${goalieThreat.cap} ${goalieThreat.name||''} has beaten ${sit.oppGoalieName} ${goalieThreat.goalsVsCurrentGoalie} time(s) before — keep testing them from the same spot.`);
+  if(goalieThreat) push(`#${goalieThreat.cap} ${goalieThreat.name||''} has beaten ${sit.oppGoalieName} ${goalieThreat.goalsVsCurrentGoalie} time(s) before — keep testing them from the same spot.`, 6, 'Matchup history');
 
   // --- This season's series vs this exact opponent (this team's own logged games) ---
   if(sit.seasonSeries){
     const ss = sit.seasonSeries;
-    reasons.push(`This season vs ${game.opponent}: ${ss.wins}-${ss.losses} in ${ss.count} prior meeting(s) (${ss.results.map(r=>r.score).join(', ')}).`);
+    push(`This season vs ${game.opponent}: ${ss.wins}-${ss.losses} in ${ss.count} prior meeting(s) (${ss.results.map(r=>r.score).join(', ')}).`, 4, 'Season series');
   }
 
   // --- Multi-year rivalry history: last meeting + recurring situational patterns ---
@@ -3190,16 +3303,20 @@ function tacticsRuleEngine(sit, game){
     if(oppContext && oppContext.lastMeeting){
       const lm = oppContext.lastMeeting;
       const note = lm.note || '';
-      reasons.push(`Last meeting (${lm.date}): ${lm.result==='W'?'Won':'Lost'} ${lm.score}. ${note}`);
+      push(`Last meeting (${lm.date}): ${lm.result==='W'?'Won':'Lost'} ${lm.score}. ${note}`, 4, 'Rivalry history');
     }
     if(sit.diff>0 && sit.quarter>=3){
-      reasons.push(`History flag: Cal has blown a lead to ${rivalry.label} late in games before (see matchup history) — treat this lead as fragile, not safe.`);
+      push(`History flag: Cal has blown a lead to ${rivalry.label} late in games before (see matchup history) — treat this lead as fragile, not safe.`, 6, 'Rivalry history');
     }
     if(sit.manstate==='man-down'){
-      reasons.push(`History flag: Cal has recently been out-disciplined by ${rivalry.label} in exclusions — this man-down moment matters more than usual against this opponent.`);
+      push(`History flag: Cal has recently been out-disciplined by ${rivalry.label} in exclusions — this man-down moment matters more than usual against this opponent.`, 6, 'Rivalry history');
     }
   }
-  return {play:chosenPlay, reasons, lineupNotes};
+
+  reasons.sort((a,b)=>b.weight-a.weight);
+  const totalWeight = reasons.reduce((s,r)=>s+r.weight, 0);
+  const confidence = totalWeight>=30 ? 'High' : totalWeight>=14 ? 'Medium' : reasons.length ? 'Low' : 'None';
+  return {play:chosenPlay, reasons, lineupNotes, confidence, totalWeight};
 }
 
 // When no rule fired a specific flag, don't just say "nothing to report" — fall back to the one
@@ -3212,23 +3329,29 @@ function buildBaselineSummary(sit){
   const lines = sit.matchups.map(mu=>`${mu.our} vs ${mu.opp}`).join(', ');
   return `No unusual patterns flagged this time — current matchups: ${lines}. Play call below is based on the man-state (${sit.manstate.replace('-',' ')}) and score context; nothing in the game log or scouting history stands out yet.`;
 }
+// "Picky" means selective, not exhaustive: show at most the top MAX_REASONS by weight, and say
+// plainly how many lower-confidence signals got left out rather than dumping everything at once.
+const MAX_TACTICS_REASONS = 6;
 async function getRecommendation(){
   const game = findGame(app.selectedGameId); if(!game) return;
   const btn = document.getElementById('tacticsRecBtn');
   btn.disabled = true; btn.textContent='Thinking...';
   const sit = buildTacticsSituation(game);
   const rec = tacticsRuleEngine(sit, game);
-  const reasons = rec.reasons.length ? rec.reasons : [buildBaselineSummary(sit)];
+  const shown = rec.reasons.slice(0, MAX_TACTICS_REASONS);
+  const hiddenCount = Math.max(0, rec.reasons.length - shown.length);
+  const reasons = shown.length ? shown : [{text: buildBaselineSummary(sit), weight:0, tag:'Baseline'}];
 
-  renderTacticsRecommendation(rec, reasons, sit);
+  renderTacticsRecommendation(rec, reasons, sit, hiddenCount);
   window._lastTacticsSituation = sit; window._lastTacticsRec = rec;
   btn.disabled=false; btn.textContent='Who should be in / what play?';
   document.getElementById('tacticsLogBtn').style.display='inline-block';
 }
 
-function renderTacticsRecommendation(rec, reasons, sit){
+function renderTacticsRecommendation(rec, reasons, sit, hiddenCount){
   const el = document.getElementById('tacticsRecArea');
   el.className='rec-box';
+  const confClass = {High:'high', Medium:'medium', Low:'low', None:'low'}[rec.confidence] || 'low';
 
   let historyHtml = '';
   if(sit){
@@ -3254,10 +3377,19 @@ function renderTacticsRecommendation(rec, reasons, sit){
   }
 
   el.innerHTML = `
-    <div class="rec-play">${rec.play.name}</div>
-    <div class="rec-sub">${rec.play.desc||''}</div>
+    <div class="rec-head">
+      <div>
+        <div class="rec-play">${rec.play.name}</div>
+        <div class="rec-sub">${rec.play.desc||''}</div>
+      </div>
+      <div class="conf-badge ${confClass}"><span class="conf-dot"></span>${rec.confidence} confidence</div>
+    </div>
     <ul class="rec-list">${rec.lineupNotes.map(n=>`<li><b>Lineup:</b> ${n}</li>`).join('') || '<li>No substitutions flagged — current lineup holds.</li>'}</ul>
-    <div class="rec-why"><span class="lbl">Why (${reasons.length} signal${reasons.length===1?'':'s'})</span><ul class="rec-why-list">${reasons.map(r=>`<li>${r}</li>`).join('')}</ul></div>
+    <div class="rec-why">
+      <span class="lbl">Top signals (${reasons.length} of ${reasons.length+hiddenCount})</span>
+      <ul class="rec-why-list">${reasons.map(r=>`<li><span class="reason-tag">${r.tag||''}</span>${r.text}</li>`).join('')}</ul>
+      ${hiddenCount>0 ? `<div class="rec-hidden-note">${hiddenCount} lower-confidence signal${hiddenCount===1?'':'s'} not shown — this stays focused on what actually matters right now.</div>` : ''}
+    </div>
     ${historyHtml}
   `;
 }
