@@ -891,7 +891,7 @@
 <script>
 const STAT_DEFS = [
   { key:'goal', label:'Goal', short:'GL', tone:'good', patterns:['goal','scores','score','scored'] },
-  { key:'shot_attempt', label:'Shot attempt', short:'ATT', tone:'', patterns:['shot attempt','shot on goal','shoot','shot','attempt']},
+  { key:'shot_attempt', label:'Shot attempt', short:'ATT', tone:'', patterns:['shot attempt','shot on goal','shoot','shot','attempt','misses the cage','miss the cage','sails the cage','sails wide','sails high','hits the bar','hit the bar','hits the crossbar','off the post','post out','bar out','bar in','misses','miss']},
   { key:'assist', label:'Assist', short:'AST', tone:'good', patterns:['assist','assists']},
   { key:'exclusion', label:'Exclusion', short:'EXC', tone:'bad', patterns:['exclusion','excluded','kicked out','ejection','ejected','eject','penalty against','penalty conceded','penalty on us','their penalty']},
   { key:'exclusion_drawn', label:'Exclusion drawn', short:'EXD', tone:'good', patterns:['exclusion drawn','drawn exclusion','drew exclusion','draws exclusion','ejection drawn','drawn ejection','drew ejection']},
@@ -901,6 +901,7 @@ const STAT_DEFS = [
   { key:'steal', label:'Steal', short:'STL', tone:'good', patterns:['steal','stole','steel']},
   { key:'turnover', label:'Turnover', short:'TO', tone:'bad', patterns:['turnover','turned it over','offensive foul','lost the ball','lost it','stolen']},
   { key:'sprint_won', label:'Sprint won', short:'SPW', tone:'good', patterns:['sprint won','wins sprint','won the sprint']},
+  { key:'rebound', label:'Rebound', short:'REB', tone:'good', patterns:['offensive rebound','o-board','put back','putback','rebound']},
 ];
 const ROLES = ['player','captain','coach','manager','statistician'];
 // Curated historical matchup data — researched manually since this static app can't
@@ -2230,7 +2231,8 @@ function buildPlayerEventLog(player){
     [1,2,3,4].forEach(q=>{
       (game.quarters[q]||[]).forEach(ev=>{
         if(ev.playerId!==player.id) return;
-        const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : ((statDef(ev.stat_type)||{}).label || ev.stat_type) + (ev.manState?` (${ev.manState})`:'');
+        const evTags=[]; if(ev.manState) evTags.push(ev.manState); if(ev.vsCap) evTags.push(`vs #${ev.vsCap}`); if(ev.passQuality) evTags.push(`${ev.passQuality} pass`);
+        const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : ((statDef(ev.stat_type)||{}).label || ev.stat_type) + (evTags.length?` (${evTags.join(', ')})`:'');
         rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:'Q'+q, time:fmtTime(ev.wall_time_offset_ms), score:null, event:eventLabel, against:'N/A' });
       });
     });
@@ -2345,16 +2347,24 @@ function tokenizeCapMentions(text, game){
   for(let i=0;i<words.length;i++){
     if(consumed.has(i)) continue;
     const w = words[i];
-    if(w!=='dark' && w!=='light') continue;
+    // "White" is just the other common name for a light cap — plenty of teams' coaches say one or
+    // the other depending on habit, and both need to mean the same side.
+    if(w!=='dark' && w!=='light' && w!=='white') continue;
+    const colorWord = w==='white' ? 'light' : w;
     let j = i+1;
     if(words[j]==='cap') j++;
     let val = parseNumberWord(words[j]);
-    // Web Speech API sometimes mishears "eight" as the bare article "a" in noisy audio. Only safe
-    // to special-case right here, immediately after a color word — nobody says "dark a" meaning
-    // anything else, but "a" alone elsewhere in a sentence is far too common to treat as a number.
-    if(val===null && words[j]==='a') val = 8;
+    // Web Speech API homophone slips in noisy audio: "eight"->"a", "two"->"to"/"too", "four"->"for".
+    // Only safe to special-case right here, immediately after a color word — nobody says "dark a"
+    // or "dark to" meaning anything else, but these words alone elsewhere in a sentence are far too
+    // common to treat as numbers generally.
+    if(val===null){
+      if(words[j]==='a') val = 8;
+      else if(words[j]==='to' || words[j]==='too') val = 2;
+      else if(words[j]==='for') val = 4;
+    }
     if(val===null) continue;
-    const side = (w===ourColor) ? 'team' : 'opponent';
+    const side = (colorWord===ourColor) ? 'team' : 'opponent';
     let playerId = null;
     if(side==='team'){ const p = roster.find(pl=>String(pl.cap)===String(val)); if(p) playerId = p.id; }
     tokens.push({playerId, cap:val, side, start: positions[i], end: positions[j]+String(words[j]).length});
@@ -2448,6 +2458,42 @@ const COMPOUND_RULES = [
   { name:'penalty_drawn_solo', test:t=>/(penalty drawn|drew (a )?penalty|draws penalty)/.test(t), build:(t,a1,a2,base)=>{
       return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn'}];
     } },
+  // "Turnover against X" — same shape as "penalty against X": the actor named first gets credit
+  // for forcing it (a steal), the actor named after "against" is the one who actually turned it
+  // over. Without a second name it's just a plain turnover on whoever was named.
+  { name:'turnover_against', test:t=>/\bturnover (against|on)\b/.test(t), build:(t,a1,a2,base,game)=>{
+      if(a2){
+        const turned = withSide(a2, oppositeSide(a1.side), game);
+        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal'}, {...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover'}];
+      }
+      return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'turnover'}];
+    } },
+  // "X [great] pass to Y for a goal/scores" — a same-team assist-and-goal in one breath, without
+  // needing the word "assist" at all. The quality word ("great"/"nice"/"good"/"perfect"/"beautiful")
+  // gets kept on the assist itself, since a coach calling out a great pass wants that distinction
+  // visible, not silently flattened into an ordinary assist.
+  { name:'pass_to_goal', test:t=>/\bpass(ed)?\b/.test(t) && /\bto\b/.test(t) && (/\bgoal\b/.test(t) || /\bscores?\b/.test(t)), build:(t,a1,a2,base,game)=>{
+      if(!a2) return null;
+      const scorer = withSide(a2, a1.side, game);
+      const assistEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'};
+      const quality = /\b(great|nice|good|perfect|beautiful|amazing)\s+pass\b/.exec(t);
+      if(quality) assistEv.passQuality = quality[1];
+      const goalEv = {...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'goal'};
+      const manState = detectManStateContext(t); if(manState) goalEv.manState = manState;
+      return [assistEv, goalEv];
+    } },
+  // "X scored/goal on Y" — Y is whoever was beaten (almost always the goalie). Only attach it when
+  // Y resolved from an explicit color mention, never a bare number: "scored on 6v5" tokenizes "6"
+  // and "5" as bare, side-less numbers too, and those must never get mistaken for a defender.
+  { name:'scored_on', test:t=>/\b(scored?|goal)\s+on\b/.test(t), build:(t,a1,a2,base,game)=>{
+      const goalEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'goal'};
+      const manState = detectManStateContext(t); if(manState) goalEv.manState = manState;
+      if(a2 && a2.side!=null){
+        const beaten = withSide(a2, oppositeSide(a1.side), game);
+        goalEv.vsCap = beaten.cap;
+      }
+      return [goalEv];
+    } },
 ];
 
 // Free text left over after removing the player mention — filler words stripped, since noisy
@@ -2475,6 +2521,7 @@ const ACTOR_CARRY_FORWARD_MS = 7000;
 function detectManStateContext(text){
   if(/\b6\s*v\s*5\b|\b6\s*on\s*5\b|\bsix\s*on\s*five\b|\bman[\s-]?up\b|\bpower\s*play\b/.test(text)) return '6v5';
   if(/\b5\s*v\s*6\b|\b5\s*on\s*6\b|\bfive\s*on\s*six\b|\bman[\s-]?down\b|\bshort[\s-]?handed\b/.test(text)) return '5v6';
+  if(/\bnatural\b|\beven\s*strength\b/.test(text)) return 'even';
   return null;
 }
 function parsePhrase(rawText, offsetMs){ const text=rawText.toLowerCase().trim().replace(/[.,!?]/g,''); if(/\b(undo|scratch that)\b/.test(text)) return {type:'undo'};
@@ -2508,7 +2555,9 @@ function expandShotAttempts(events){ const extra=[]; events.forEach(ev=>{ if(ev.
 function eventLabelInfo(ev){
   if(ev.stat_type==='unmatched'){ return {text:`"${ev.raw_phrase}" — not recognized`, tone:'', cap:'—'}; }
   if(ev.stat_type==='note'){ const cap=ev.playerCap ? `#${ev.playerCap}` : '?'; return {text:`Note: ${ev.note||ev.raw_phrase}`, tone:'note', cap}; }
-  const def=statDef(ev.stat_type); const cap=ev.playerCap ? `#${ev.playerCap}` : '?'; return {text:def.label+(ev.manState?` (${ev.manState})`:''), tone:def.tone, cap};
+  const def=statDef(ev.stat_type); const cap=ev.playerCap ? `#${ev.playerCap}` : '?';
+  const tags=[]; if(ev.manState) tags.push(ev.manState); if(ev.vsCap) tags.push(`vs #${ev.vsCap}`); if(ev.passQuality) tags.push(`${ev.passQuality} pass`);
+  return {text:def.label+(tags.length?` (${tags.join(', ')})`:''), tone:def.tone, cap};
 }
 
 function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); if(!game) return; if(!app.quarterStart[app.currentQ]) app.quarterStart[app.currentQ]=Date.now(); const offset=Date.now()-app.quarterStart[app.currentQ]; const result=parsePhrase(rawText, offset);
