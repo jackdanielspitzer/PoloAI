@@ -901,6 +901,8 @@ const STAT_DEFS = [
   { key:'steal', label:'Steal', short:'STL', tone:'good', patterns:['steal','stole','steel']},
   { key:'turnover', label:'Turnover', short:'TO', tone:'bad', patterns:['turnover','turned it over','offensive foul','lost the ball','lost it','stolen']},
   { key:'sprint_won', label:'Sprint won', short:'SPW', tone:'good', patterns:['sprint won','wins sprint','won the sprint']},
+  { key:'sprint_lost', label:'Sprint lost', short:'SPL', tone:'bad', patterns:['sprint lost','loses sprint','lost the sprint','lost sprint']},
+  { key:'sprint_attempt', label:'Sprint attempt', short:'SPA', tone:'', patterns:[]},
   { key:'rebound', label:'Rebound', short:'REB', tone:'good', patterns:['offensive rebound','o-board','put back','putback','rebound']},
 ];
 const ROLES = ['player','captain','coach','manager','statistician'];
@@ -948,6 +950,9 @@ const PRESET_ICONS = [
   `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect rx="10" width="64" height="64" fill="%230F2B36"/><g fill="%2300A8FF"><path d="M6 40c10-8 42-8 52 0v6H6v-6z"/></g><circle cx="42" cy="20" r="7" fill="%23FFDD66"/></svg>')}`
 ];
 const NUM_WORDS = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10, eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20, ate:8, sex:6, free:3, tree:3, sicks:6, sick:6, nien:9, fife:5};
+// Hesitation sounds a coach makes mid-call ("dark... um... eight") that a real speech transcript
+// carries as literal words — skipped when looking for the cap number right after a color word.
+const HESITATION_WORDS = new Set(['um','uh','umm','uhh','er','erm','ah']);
 const ALIAS_STOPWORDS = new Set(['dark','light','undo','goal','scores','score','scored','assist','assists','exclusion','excluded','kicked','out','ejection','ejected','eject','penalty','drawn','draws','drew','against','conceded','block','blocked','steal','stole','steel','turnover','turned','sprint','won','wins','scratch','that','from','by','the','ball','was','and','took','shot','for','us','their','our','on']);
 
 const app = {
@@ -2032,8 +2037,9 @@ function renderGameFeed(game){ const el=document.getElementById('gameFeed'); con
 // full roster (e.g. to double-check a bench player genuinely has nothing yet).
 function renderGameStats(game){ const table=document.getElementById('gameStatsTable'); const roster=getGameRoster(game);
   const allEvents = getGameEvents(game).filter(e=>e.stat_type!=='unmatched');
-  const head = '<thead><tr><th style="text-align:left;">Player</th>'+STAT_DEFS.map(d=>`<th>${d.short}</th>`).join('')+'<th>SH%</th></tr></thead>';
-  const pctOf = (goals, attempts) => attempts ? Math.min(100, Math.round((goals/attempts)*100)) + '%' : '—';
+  const head = '<thead><tr><th style="text-align:left;">Player</th>'+STAT_DEFS.map(d=>`<th>${d.short}</th>`).join('')+'<th>SH%</th><th>SPR%</th></tr></thead>';
+  const pctOf = (made, attempts) => attempts ? Math.min(100, Math.round((made/attempts)*100)) + '%' : '—';
+  const sprintWonIdx = STAT_DEFS.findIndex(d=>d.key==='sprint_won'), sprintAttIdx = STAT_DEFS.findIndex(d=>d.key==='sprint_attempt');
   const withCounts = roster.map(player=>{
     const counts = STAT_DEFS.map(def=>allEvents.filter(e=>e.playerId===player.id && e.stat_type===def.key).length);
     return { player, counts, active: counts.some(c=>c>0) };
@@ -2043,12 +2049,14 @@ function renderGameStats(game){ const table=document.getElementById('gameStatsTa
   const visible = showAll ? withCounts : withCounts.filter(r=>r.active);
   const rows = visible.map(({player,counts})=>{
     const shPct = pctOf(counts[0], counts[1]);
-    return `<tr><td class="pcell">#${player.cap} ${player.name||''}</td>` + counts.map(c=>`<td>${c||''}</td>`).join('') + `<td class="shpct">${shPct}</td></tr>`;
+    const sprPct = pctOf(counts[sprintWonIdx], counts[sprintAttIdx]);
+    return `<tr><td class="pcell">#${player.cap} ${player.name||''}</td>` + counts.map(c=>`<td>${c||''}</td>`).join('') + `<td class="shpct">${shPct}</td><td class="shpct">${sprPct}</td></tr>`;
   }).join('');
   const totals = STAT_DEFS.map(def=>allEvents.filter(e=>e.stat_type===def.key).length);
   const totalPct = pctOf(totals[0], totals[1]);
-  const totalRow = `<tr class="total"><td class="pcell">Team total</td>${totals.map(c=>`<td>${c}</td>`).join('')}<td>${totalPct}</td></tr>`;
-  table.innerHTML = head + '<tbody>' + (rows || `<tr><td colspan="${STAT_DEFS.length+2}" style="color:var(--text-faint);">No player stats yet.</td></tr>`) + totalRow + '</tbody>';
+  const totalSprPct = pctOf(totals[sprintWonIdx], totals[sprintAttIdx]);
+  const totalRow = `<tr class="total"><td class="pcell">Team total</td>${totals.map(c=>`<td>${c}</td>`).join('')}<td>${totalPct}</td><td>${totalSprPct}</td></tr>`;
+  table.innerHTML = head + '<tbody>' + (rows || `<tr><td colspan="${STAT_DEFS.length+3}" style="color:var(--text-faint);">No player stats yet.</td></tr>`) + totalRow + '</tbody>';
   const toggle = document.getElementById('gameStatsToggle');
   if(toggle){
     toggle.style.display = inactiveCount>0 ? 'inline-flex' : 'none';
@@ -2352,6 +2360,11 @@ function tokenizeCapMentions(text, game){
     if(w!=='dark' && w!=='light' && w!=='white') continue;
     const colorWord = w==='white' ? 'light' : w;
     let j = i+1;
+    // A coach hesitating mid-call ("dark... um... eight") is completely normal, and the transcript
+    // carries that hesitation as a real word between the color and the number. Skip past it instead
+    // of treating "um"/"uh" as if it were the number itself — otherwise the color gets orphaned and
+    // the cap falls back through the bare-number path with no side at all.
+    while(HESITATION_WORDS.has(words[j])) { consumed.add(j); j++; }
     if(words[j]==='cap') j++;
     let val = parseNumberWord(words[j]);
     // Web Speech API homophone slips in noisy audio: "eight"->"a", "two"->"to"/"too", "four"->"for".
@@ -2379,9 +2392,38 @@ function tokenizeCapMentions(text, game){
   return tokens;
 }
 
+// A coach thinks of "the goalie" as a role, not a cap number to remember and say every time.
+// "dark goalie" / "light goalie" / "white goalie" (with or without a leading "the") resolves to
+// whichever player is actually tagged GK for our side, or the opponent roster entry whose scouting
+// note says goalie — falling back to cap 1 by convention if nothing's tagged either way.
+function resolveGoalie(side, game){
+  if(side==='team'){
+    const roster = getGameRoster(game);
+    const gk = roster.find(p=>(p.wpPosition||'').toUpperCase()==='GK') || roster.find(p=>String(p.cap)==='1');
+    return gk ? { playerId:gk.id, cap:gk.cap } : null;
+  }
+  const oppRoster = game.oppRoster||[];
+  const gk = oppRoster.find(p=>/\b(gk|goalie|goalkeeper)\b/i.test(p.note||'')) || oppRoster.find(p=>String(p.cap)==='1');
+  return gk ? { playerId:null, cap:gk.cap } : null;
+}
+function findGoalieMentions(text, game){
+  if(!game) return [];
+  const mentions = [];
+  const re = /\b(dark|light|white)\s+(?:cap\s+)?goalie\b/g;
+  const team = findTeam(game.teamId);
+  const ourColor = ((game && game.ourColor) || (team && team.color) || 'Dark').toLowerCase();
+  let m;
+  while((m=re.exec(text))){
+    const colorWord = m[1]==='white' ? 'light' : m[1];
+    const side = colorWord===ourColor ? 'team' : 'opponent';
+    const resolved = resolveGoalie(side, game);
+    if(resolved) mentions.push({ playerId: resolved.playerId, cap: resolved.cap, side, start: m.index, end: m.index+m[0].length });
+  }
+  return mentions;
+}
 function findMentions(text){
   const game = app.selectedGameId ? findGame(app.selectedGameId) : null;
-  const all = [...findNameMentions(text), ...tokenizeCapMentions(text, game)];
+  const all = [...findNameMentions(text), ...tokenizeCapMentions(text, game), ...findGoalieMentions(text, game)];
   all.sort((a,b)=>a.start-b.start);
   return all;
 }
@@ -2398,9 +2440,19 @@ function withSide(mention, side, game){
   return { ...mention, side, playerId };
 }
 
+// "X <verb>ed by Y" assumes X (the victim/scorer) is named first and Y (the credited actor) comes
+// after "by" — but with no victim named at all ("ball stolen by the light goalie"), the only
+// mention found IS the credited actor, sitting after "by". Without this check it would land in
+// the victim's role by default just because it's the sole mention in the phrase.
+function onlyMentionIsCredited(a1, a2, text){
+  if(a2) return false;
+  const byIdx = text.search(/\bby\b/);
+  return byIdx!==-1 && a1.start > byIdx;
+}
 const COMPOUND_RULES = [
   // Assist is always same-team: "dark 3 assisted 4" (active) or "goal ... assisted by dark 3" (passive).
   { name:'assist_passive', test:t=>/assisted by/.test(t), build:(t,a1,a2,base,game)=>{
+      if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'}];
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'goal'}];
       if(a2){ const assister = withSide(a2, a1.side, game); events.push({...base, playerId:assister.playerId, playerCap:assister.cap, side:assister.side, stat_type:'assist'}); }
       return events;
@@ -2412,30 +2464,35 @@ const COMPOUND_RULES = [
     } },
   // Block is always opposite-team: shooter vs blocker. Handles "blocked by" (passive), and active
   // phrasing whether or not a shooter is also named ("dark 3 blocked" / "dark 3 blocked light 5").
+  // Both sides of every adversarial pair below get a vsCap tag pointing at the other player, so
+  // "who blocked/stole/excluded whom" shows up directly in the event feed instead of two
+  // disconnected rows a coach has to mentally link back together.
   { name:'block_passive', test:t=>/blocked by/.test(t), build:(t,a1,a2,base,game)=>{
+      if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'block'}];
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'shot_attempt'}];
-      if(a2){ const blocker = withSide(a2, oppositeSide(a1.side), game); events.push({...base, playerId:blocker.playerId, playerCap:blocker.cap, side:blocker.side, stat_type:'block'}); }
+      if(a2){ const blocker = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = blocker.cap; events.push({...base, playerId:blocker.playerId, playerCap:blocker.cap, side:blocker.side, stat_type:'block', vsCap:a1.cap}); }
       return events;
     } },
   { name:'block_active', test:t=>/\bblock\w*\b/.test(t), build:(t,a1,a2,base,game)=>{
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'block'}];
-      if(a2){ const shooter = withSide(a2, oppositeSide(a1.side), game); events.push({...base, playerId:shooter.playerId, playerCap:shooter.cap, side:shooter.side, stat_type:'shot_attempt'}); }
+      if(a2){ const shooter = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = shooter.cap; events.push({...base, playerId:shooter.playerId, playerCap:shooter.cap, side:shooter.side, stat_type:'shot_attempt', vsCap:a1.cap}); }
       return events;
     } },
   // Steal is always opposite-team: whoever turned it over vs whoever stole it.
   { name:'steal_from', test:t=>/(stole|steal\w*).*from/.test(t), build:(t,a1,a2,base,game)=>{
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal'}];
-      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover'}); }
+      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = turned.cap; events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover', vsCap:a1.cap}); }
       return events;
     } },
   { name:'stolen_by', test:t=>/stolen by/.test(t), build:(t,a1,a2,base,game)=>{
+      if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal'}];
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'turnover'}];
-      if(a2){ const stealer = withSide(a2, oppositeSide(a1.side), game); events.push({...base, playerId:stealer.playerId, playerCap:stealer.cap, side:stealer.side, stat_type:'steal'}); }
+      if(a2){ const stealer = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = stealer.cap; events.push({...base, playerId:stealer.playerId, playerCap:stealer.cap, side:stealer.side, stat_type:'steal', vsCap:a1.cap}); }
       return events;
     } },
   { name:'steal_active', test:t=>/\b(stole|steals?)\b/.test(t), build:(t,a1,a2,base,game)=>{
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal'}];
-      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover'}); }
+      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = turned.cap; events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover', vsCap:a1.cap}); }
       return events;
     } },
   // Exclusion: "<attacker who drew it> excluded <defender who committed it>" — always opposite-team.
@@ -2443,7 +2500,7 @@ const COMPOUND_RULES = [
   { name:'exclusion_pair', test:t=>/\b(exclud\w*|eject\w*)\b/.test(t)&&!/(drawn|drew|draws)/.test(t), build:(t,a1,a2,base,game)=>{
       if(a2){
         const committed = withSide(a2, oppositeSide(a1.side), game);
-        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion_drawn'}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion'}];
+        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion_drawn', vsCap:committed.cap}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion', vsCap:a1.cap}];
       }
       return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
     } },
@@ -2451,7 +2508,7 @@ const COMPOUND_RULES = [
   { name:'penalty_against', test:t=>/penalty (against|on)\b/.test(t), build:(t,a1,a2,base,game)=>{
       if(a2){
         const committed = withSide(a2, oppositeSide(a1.side), game);
-        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn'}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion'}];
+        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn', vsCap:committed.cap}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion', vsCap:a1.cap}];
       }
       return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
     } },
@@ -2464,7 +2521,7 @@ const COMPOUND_RULES = [
   { name:'turnover_against', test:t=>/\bturnover (against|on)\b/.test(t), build:(t,a1,a2,base,game)=>{
       if(a2){
         const turned = withSide(a2, oppositeSide(a1.side), game);
-        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal'}, {...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover'}];
+        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal', vsCap:turned.cap}, {...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover', vsCap:a1.cap}];
       }
       return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'turnover'}];
     } },
@@ -2485,14 +2542,26 @@ const COMPOUND_RULES = [
   // "X scored/goal on Y" — Y is whoever was beaten (almost always the goalie). Only attach it when
   // Y resolved from an explicit color mention, never a bare number: "scored on 6v5" tokenizes "6"
   // and "5" as bare, side-less numbers too, and those must never get mistaken for a defender.
-  { name:'scored_on', test:t=>/\b(scored?|goal)\s+on\b/.test(t), build:(t,a1,a2,base,game)=>{
+  { name:'scored_on', test:t=>/\b(score|scores|scored|goal)\s+on\b/.test(t), build:(t,a1,a2,base,game)=>{
       const goalEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'goal'};
       const manState = detectManStateContext(t); if(manState) goalEv.manState = manState;
-      if(a2 && a2.side!=null){
+      // "Scored on 15" (no color repeated) always means the opposing player at that cap — "scoring
+      // on" your own teammate makes no sense, so the side can be safely inferred. The one case this
+      // must NOT fire is "scored on 6 v 5"/"scored on 6 on 5": there, "6" and "5" tokenize as bare
+      // numbers too, but they're the man-state phrase, not a real player — detectManStateContext
+      // catching that phrase is exactly the signal to skip attaching a defender here.
+      if(a2 && !manState){
         const beaten = withSide(a2, oppositeSide(a1.side), game);
         goalEv.vsCap = beaten.cap;
       }
       return [goalEv];
+    } },
+  // "X won the sprint against/over Y" — credits the loss to Y too, instead of a sprint win floating
+  // with no opponent on record.
+  { name:'sprint_won_against', test:t=>/\b(won|wins)\s+(the\s+)?sprint\s+(against|over)\b/.test(t), build:(t,a1,a2,base,game)=>{
+      const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'sprint_won'}];
+      if(a2){ const loser = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = loser.cap; events.push({...base, playerId:loser.playerId, playerCap:loser.cap, side:loser.side, stat_type:'sprint_lost', vsCap:a1.cap}); }
+      return events;
     } },
 ];
 
@@ -2550,7 +2619,14 @@ function parsePhrase(rawText, offsetMs){ const text=rawText.toLowerCase().trim()
   }
   return {type:'events', events:[{...base, playerId:actor1?actor1.playerId:null, playerCap:actor1?actor1.cap:null, side:actor1?actor1.side:null, stat_type:'unmatched'}]}; }
 
-function expandShotAttempts(events){ const extra=[]; events.forEach(ev=>{ if(ev.stat_type==='goal') extra.push({...ev, stat_type:'shot_attempt'}); }); return events.concat(extra); }
+// Auto-derives the "attempted" half of a stat from whichever outcome actually got called — a goal
+// always implies a shot attempt, and a sprint win or loss always implies a sprint was contested.
+// This is the only place either derived count gets added, so every insertion path staying routed
+// through here (voice and both manual-entry branches) is what keeps SH% and sprint W/L honest.
+function expandShotAttempts(events){ const extra=[]; events.forEach(ev=>{
+  if(ev.stat_type==='goal') extra.push({...ev, stat_type:'shot_attempt'});
+  if(ev.stat_type==='sprint_won' || ev.stat_type==='sprint_lost') extra.push({...ev, stat_type:'sprint_attempt'});
+}); return events.concat(extra); }
 
 function eventLabelInfo(ev){
   if(ev.stat_type==='unmatched'){ return {text:`"${ev.raw_phrase}" — not recognized`, tone:'', cap:'—'}; }
