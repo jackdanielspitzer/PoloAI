@@ -3169,9 +3169,7 @@ function marginBucket(diff){
   if(diff>=-2) return 'trailingClose';
   return 'trailingBig';
 }
-function buildOpponentContext(game){
-  const rivalry = findHistoricalMatchup(game.opponent);
-  if(!rivalry) return null;
+function buildCuratedOpponentContext(rivalry){
   const sortedGames = [...rivalry.games].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const lastMeeting = sortedGames[sortedGames.length-1] || null;
   const career = {}; // lowercased player name -> {name, goals, exDrawn, exGiven, meetings}
@@ -3221,6 +3219,123 @@ function buildOpponentContext(game){
     });
   });
   return { rivalry, lastMeeting, career, blockHistory, turnoverHistory, assistHistory, goalVsGoalie, situational, gameLog };
+}
+// Mines this team's own past locally-tracked games against this exact opponent for the same
+// matchup signals the curated rivalry file provides (career totals, block/steal history, goalie
+// history, situational tendencies) — every relational voice event now carries a vsCap on BOTH
+// sides (see COMPOUND_RULES), so a team with zero hand-curated rivalry history still gets a real
+// tactics read built from what was actually tracked, not just teams someone wrote up by hand.
+function buildLiveOpponentContext(game){
+  const opponent = (game.opponent||'').trim();
+  if(!opponent) return null;
+  const priorGames = app.games.filter(g=>g.id!==game.id && g.teamId===game.teamId && (g.opponent||'').trim().toLowerCase()===opponent.toLowerCase());
+  if(priorGames.length===0) return null;
+  const career = {}, blockHistory = [], turnoverHistory = [], assistHistory = [], goalVsGoalie = {}, situational = {}, gameLog = {};
+  // Both our roster and the opponent's per-game roster are matched by cap number, not id — a live
+  // event only ever carries a cap (opponent players have no stable id across games at all, and
+  // caps are the one identity the whole rest of the app already treats as stable within a season).
+  const resolveName = (g, side, cap) => {
+    if(cap==null) return null;
+    if(side==='team'){ const p = getGameRoster(g).find(pp=>String(pp.cap)===String(cap)); return (p && p.name) || ('#'+cap); }
+    const r = (g.oppRoster||[]).find(rr=>String(rr.cap)===String(cap)); return (r && r.name) || ('#'+cap);
+  };
+  const touch = key => { if(!career[key]) career[key] = {name:null, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, meetings:0}; return career[key]; };
+  priorGames.forEach(g=>{
+    const seen = new Set();
+    const goalsThisGame = {};
+    let teamScore=0, oppScore=0;
+    [1,2,3,4].forEach(q=>{
+      (g.quarters[q]||[]).forEach(ev=>{
+        if(!ev.stat_type || ev.stat_type==='unmatched' || ev.playerCap==null) return;
+        const side = ev.side||'team';
+        const name = resolveName(g, side, ev.playerCap);
+        const key = (name||'').toLowerCase(); if(!key) return;
+        seen.add(key);
+        const c = touch(key); c.name = name;
+        if(ev.stat_type==='goal'){
+          c.goals++; goalsThisGame[key] = (goalsThisGame[key]||0)+1;
+          if(side==='team'){
+            teamScore++;
+            if(!situational[key]) situational[key] = {name, byQuarter:{}, byMargin:{}, totalGoals:0};
+            const sit = situational[key];
+            sit.totalGoals++;
+            sit.byQuarter['Q'+q] = (sit.byQuarter['Q'+q]||0)+1;
+            const bucket = marginBucket(teamScore-oppScore);
+            sit.byMargin[bucket] = (sit.byMargin[bucket]||0)+1;
+            if(ev.vsCap!=null){
+              const goalieName = resolveName(g,'opponent',ev.vsCap);
+              if(!goalVsGoalie[key]) goalVsGoalie[key] = {};
+              goalVsGoalie[key][goalieName] = (goalVsGoalie[key][goalieName]||0)+1;
+            }
+          } else { oppScore++; }
+        }
+        else if(ev.stat_type==='assist') c.assists++;
+        else if(ev.stat_type==='save') c.saves++;
+        else if(ev.stat_type==='shot_attempt') c.shots++;
+        else if(ev.stat_type==='exclusion_drawn') c.exDrawn++;
+        else if(ev.stat_type==='exclusion') c.exGiven++;
+        else if(ev.stat_type==='block' && side==='opponent' && ev.vsCap!=null){
+          blockHistory.push({ shooter: resolveName(g,'team',ev.vsCap), blocker:name });
+        }
+        else if(ev.stat_type==='steal' && side==='opponent' && ev.vsCap!=null){
+          turnoverHistory.push({ turnoverBy: resolveName(g,'team',ev.vsCap), stolenBy:name });
+        }
+      });
+    });
+    seen.forEach(key=>{ career[key].meetings++; });
+    Object.keys(goalsThisGame).forEach(key=>{ if(!gameLog[key]) gameLog[key]=[]; gameLog[key].push({date:g.date, goals:goalsThisGame[key]}); });
+  });
+  return { rivalry:null, lastMeeting:null, career, blockHistory, turnoverHistory, assistHistory, goalVsGoalie, situational, gameLog };
+}
+// Combine curated multi-year rivalry data with freshly-mined live game data into one context —
+// rivalry/lastMeeting stay curated-only (that prose is written specifically for the hand-curated
+// dataset), everything else is summed/concatenated so a player who shows up in BOTH sources gets
+// full credit across all of it.
+function mergeOpponentContexts(curated, live){
+  if(!curated) return live;
+  if(!live) return curated;
+  const career = {};
+  const mergeCareer = src => Object.entries(src).forEach(([key,v])=>{
+    const t = touchMerge(career, key, v.name);
+    t.goals+=v.goals; t.assists+=v.assists; t.saves+=v.saves; t.shots+=v.shots; t.exDrawn+=v.exDrawn; t.exGiven+=v.exGiven; t.meetings+=v.meetings;
+  });
+  function touchMerge(map, key, name){ if(!map[key]) map[key] = {name, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, meetings:0}; return map[key]; }
+  mergeCareer(curated.career); mergeCareer(live.career);
+
+  const goalVsGoalie = {};
+  const mergeGVG = src => Object.entries(src).forEach(([scorer,map])=>{
+    if(!goalVsGoalie[scorer]) goalVsGoalie[scorer] = {};
+    Object.entries(map).forEach(([goalie,n])=>{ goalVsGoalie[scorer][goalie] = (goalVsGoalie[scorer][goalie]||0)+n; });
+  });
+  mergeGVG(curated.goalVsGoalie); mergeGVG(live.goalVsGoalie);
+
+  const situational = {};
+  const mergeSit = src => Object.entries(src).forEach(([key,sit])=>{
+    if(!situational[key]) situational[key] = {name:sit.name, byQuarter:{}, byMargin:{}, totalGoals:0};
+    const t = situational[key];
+    t.totalGoals += sit.totalGoals;
+    Object.entries(sit.byQuarter).forEach(([q,n])=>{ t.byQuarter[q]=(t.byQuarter[q]||0)+n; });
+    Object.entries(sit.byMargin).forEach(([m,n])=>{ t.byMargin[m]=(t.byMargin[m]||0)+n; });
+  });
+  mergeSit(curated.situational); mergeSit(live.situational);
+
+  const gameLog = {};
+  const mergeLog = src => Object.entries(src).forEach(([key,log])=>{ if(!gameLog[key]) gameLog[key]=[]; gameLog[key].push(...log); });
+  mergeLog(curated.gameLog); mergeLog(live.gameLog);
+
+  return {
+    rivalry: curated.rivalry, lastMeeting: curated.lastMeeting,
+    career, blockHistory:[...curated.blockHistory, ...live.blockHistory],
+    turnoverHistory:[...curated.turnoverHistory, ...live.turnoverHistory],
+    assistHistory:[...curated.assistHistory, ...live.assistHistory],
+    goalVsGoalie, situational, gameLog
+  };
+}
+function buildOpponentContext(game){
+  const rivalry = findHistoricalMatchup(game.opponent);
+  const curated = rivalry ? buildCuratedOpponentContext(rivalry) : null;
+  const live = buildLiveOpponentContext(game);
+  return mergeOpponentContexts(curated, live);
 }
 // Generic streak/trend read on any {date,goals}[] log — used for both "vs this opponent" and "this season overall."
 function computeStreak(log){
