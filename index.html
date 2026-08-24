@@ -800,6 +800,7 @@
           <div>
             <div class="panel">
               <h2>Pool — drag to set positions · click a cap to toggle exclusion</h2>
+              <div class="entity-meta" id="tacticsLiveStatus" style="margin-bottom:8px;"></div>
               <div class="pool-wrap">
                 <div class="pool" id="tacticsPool">
                   <div class="zline two-l"></div><div class="zline five-l"></div>
@@ -2290,7 +2291,12 @@ function buildPlayerEventLog(player){
         if(ev.playerId!==player.id) return;
         const evTags=[]; if(ev.manState) evTags.push(ev.manState); if(ev.vsCap) evTags.push(`vs #${ev.vsCap}`); if(ev.passQuality) evTags.push(`${ev.passQuality} pass`);
         const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : ((statDef(ev.stat_type)||{}).label || ev.stat_type) + (evTags.length?` (${evTags.join(', ')})`:'');
-        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:'Q'+q, time:fmtTime(ev.wall_time_offset_ms), score:null, event:eventLabel, against:'N/A' });
+        // Rows here are always OUR player's events (filtered by playerId above), so a vsCap always
+        // points at the opponent — resolve it against this specific game's opponent roster instead
+        // of hardcoding N/A and throwing away information the event already carries.
+        let against = 'N/A';
+        if(ev.vsCap!=null){ const r=(game.oppRoster||[]).find(rr=>String(rr.cap)===String(ev.vsCap)); against = (r && r.name) || `#${ev.vsCap}`; }
+        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:'Q'+q, time:fmtTime(ev.wall_time_offset_ms), score:null, event:eventLabel, against });
       });
     });
   });
@@ -2517,7 +2523,18 @@ const COMPOUND_RULES = [
   { name:'assist_active', test:t=>/\bassists?(ed|ing)?\b/.test(t) && !/assisted by/.test(t), build:(t,a1,a2,base,game)=>{
       if(!a2) return null;
       const scorer = withSide(a2, a1.side, game);
-      return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'}, {...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'goal'}];
+      const assistEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'};
+      const goalEv = {...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'goal'};
+      const events = [assistEv, goalEv];
+      // "on a great drive/move/cut/fake/finish" describes the SCORER's move, not the pass itself —
+      // only "great pass" (already tagged on the assist elsewhere) describes the assister's work.
+      const quality = /\b(great|nice|good|perfect|beautiful|amazing)\s+(pass|drive|move|cut|fake|finish)\b/.exec(t);
+      if(quality){
+        const [, adj, noun] = quality;
+        if(noun==='pass'){ assistEv.passQuality = adj; events.push({...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'note', note:`${adj} pass to #${scorer.cap}`}); }
+        else { events.push({...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'note', note:`${adj} ${noun}`}); }
+      }
+      return events;
     } },
   // Block is always opposite-team: shooter vs blocker. Handles "blocked by" (passive), and active
   // phrasing whether or not a shooter is also named ("dark 3 blocked" / "dark 3 blocked light 5").
@@ -2959,6 +2976,7 @@ function renderTactics(){
   document.getElementById('tacticsInfoOpponent').textContent = game.opponent ? `Opponent: ${game.opponent}` : '';
   document.getElementById('tacticsInfoQ').textContent = `Quarter ${app.currentQ}`;
 
+  renderTacticsLiveStatus(game);
   renderTacticsPool(game);
   renderTacticsOppList(game);
   initOppRosterSource();
@@ -2966,6 +2984,20 @@ function renderTactics(){
   renderTacticsHistory(game);
   renderRivalryHistory(game);
   updateTacticsManstate(game);
+}
+// A coach glancing at the tactics board should see the same live game state the recommendation
+// engine already reasons over (buildTacticsSituation) — score, quarter, elapsed time, and the
+// key running totals for both sides — instead of that data only ever surfacing buried inside a
+// recommendation's reasoning text.
+function renderTacticsLiveStatus(game){
+  const el = document.getElementById('tacticsLiveStatus'); if(!el) return;
+  const score = computeGameScore(game);
+  const elapsedMs = app.quarterStart && app.quarterStart[app.currentQ] ? Date.now()-app.quarterStart[app.currentQ] : null;
+  const events = getGameEvents(game).filter(e=>e.stat_type && e.stat_type!=='unmatched');
+  const count = (side,key) => events.filter(e=>(e.side||'team')===side && e.stat_type===key).length;
+  const line = (side,label) => `${label}: ${count(side,'goal')}G/${count(side,'shot_attempt')}ATT · ${count(side,'exclusion_drawn')} EXD/${count(side,'exclusion')} EXG · ${count(side,'steal')} STL/${count(side,'turnover')} TO`;
+  el.innerHTML = `<span><b>${score.team}-${score.opponent}</b> · Q${app.currentQ}${elapsedMs!=null?` · ${fmtTime(elapsedMs)} elapsed`:''}</span>` +
+    `<span>${line('team','Us')}</span><span>${line('opponent','Opp')}</span>`;
 }
 
 function renderRivalryHistory(game){
