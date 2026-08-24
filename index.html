@@ -3219,7 +3219,7 @@ function buildCuratedOpponentContext(rivalry){
       (box[sideKey]||[]).forEach(p=>{
         const key = (p.name||'').toLowerCase(); if(!key) return;
         nameToSide[key] = sideKey;
-        if(!career[key]) career[key] = {name:p.name, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, meetings:0};
+        if(!career[key]) career[key] = {name:p.name, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, scoredOn:0, meetings:0};
         career[key].goals += p.g||0; career[key].assists += p.a||0; career[key].saves += p.sv||0; career[key].shots += p.sh||0; career[key].exDrawn += p.exD||0; career[key].exGiven += p.exG||0; career[key].meetings += 1;
         if(!gameLog[key]) gameLog[key] = [];
         gameLog[key].push({date:g.date, goals:p.g||0});
@@ -3271,7 +3271,7 @@ function buildLiveOpponentContext(game){
     if(side==='team'){ const p = getGameRoster(g).find(pp=>String(pp.cap)===String(cap)); return (p && p.name) || ('#'+cap); }
     const r = (g.oppRoster||[]).find(rr=>String(rr.cap)===String(cap)); return (r && r.name) || ('#'+cap);
   };
-  const touch = key => { if(!career[key]) career[key] = {name:null, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, meetings:0}; return career[key]; };
+  const touch = key => { if(!career[key]) career[key] = {name:null, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, scoredOn:0, meetings:0}; return career[key]; };
   priorGames.forEach(g=>{
     const seen = new Set();
     const goalsThisGame = {};
@@ -3306,6 +3306,7 @@ function buildLiveOpponentContext(game){
         else if(ev.stat_type==='shot_attempt') c.shots++;
         else if(ev.stat_type==='exclusion_drawn') c.exDrawn++;
         else if(ev.stat_type==='exclusion') c.exGiven++;
+        else if(ev.stat_type==='scored_on') c.scoredOn++;
         else if(ev.stat_type==='block' && side==='opponent' && ev.vsCap!=null){
           blockHistory.push({ shooter: resolveName(g,'team',ev.vsCap), blocker:name });
         }
@@ -3329,9 +3330,9 @@ function mergeOpponentContexts(curated, live){
   const career = {};
   const mergeCareer = src => Object.entries(src).forEach(([key,v])=>{
     const t = touchMerge(career, key, v.name);
-    t.goals+=v.goals; t.assists+=v.assists; t.saves+=v.saves; t.shots+=v.shots; t.exDrawn+=v.exDrawn; t.exGiven+=v.exGiven; t.meetings+=v.meetings;
+    t.goals+=v.goals; t.assists+=v.assists; t.saves+=v.saves; t.shots+=v.shots; t.exDrawn+=v.exDrawn; t.exGiven+=v.exGiven; t.scoredOn+=(v.scoredOn||0); t.meetings+=v.meetings;
   });
-  function touchMerge(map, key, name){ if(!map[key]) map[key] = {name, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, meetings:0}; return map[key]; }
+  function touchMerge(map, key, name){ if(!map[key]) map[key] = {name, goals:0, assists:0, saves:0, shots:0, exDrawn:0, exGiven:0, scoredOn:0, meetings:0}; return map[key]; }
   mergeCareer(curated.career); mergeCareer(live.career);
 
   const goalVsGoalie = {};
@@ -3504,6 +3505,14 @@ function seasonShootingPct(playerId){
   if(attempts < 3) return null;
   return { goals, attempts, pct: goals/attempts };
 }
+// Same shape/gating as shooting efficiency, for sprint contests — a player who reliably wins the
+// opening sprint is a real, quantifiable way to start a possession in our favor, not a vibe.
+function seasonSprintPct(playerId){
+  const won = seasonStat(playerId, 'sprint_won');
+  const attempts = seasonStat(playerId, 'sprint_attempt');
+  if(attempts < 3) return null;
+  return { won, attempts, pct: won/attempts };
+}
 // Full-game exclusion differential (not just the last-6-event momentum window) — a steadier read
 // on which team is controlling the whistle over the whole game so far.
 function fullGameFoulDifferential(game){
@@ -3530,6 +3539,9 @@ function computePlayerValueScore(p, oppContext){
   const shooting = seasonShootingPct(p.id);
   if(shooting){ const delta = shooting.pct - 0.35; score += delta * 10; breakdown.push(`${Math.round(shooting.pct*100)}% shooting (${shooting.goals}/${shooting.attempts})`); }
   if(p.gameExGiven>=2){ score -= 3; breakdown.push('2 exclusions already this game'); }
+  if(p.gameTurnovers>=2){ score -= 1.5; breakdown.push(`${p.gameTurnovers} turnovers already this game`); }
+  const sprint = seasonSprintPct(p.id);
+  if(sprint && sprint.pct>=0.65){ score += 1; breakdown.push(`${Math.round(sprint.pct*100)}% sprint win rate`); }
   if(p.fatigue==='High'){ score -= 2; breakdown.push('high fatigue'); }
   const noteFlag = p.noteFlags && p.noteFlags[0];
   if(noteFlag && noteFlag.count>=2){ score -= Math.min(noteFlag.count, 4); breakdown.push(`flagged "${noteFlag.text}" ${noteFlag.count}x recently`); }
@@ -3564,6 +3576,10 @@ function computeMatchupEdge(mu){
   if(mu.stolenBy){ edge -= 1.5; drivers.push(`${mu.opp} has stripped the ball off ${mu.our} before`); }
   if(mu.oppNote && /weak|slow|foul|tired/i.test(mu.oppNote)){ edge += 2; drivers.push(`scouted: "${mu.oppNote}"`); }
   if(mu.ourId){ const s = seasonShootingPct(mu.ourId); if(s && s.pct>=0.45){ edge += 1.5; drivers.push(`${mu.our} shooting ${Math.round(s.pct*100)}% this season`); } }
+  // A defender who's picked up real exclusion history against this exact opponent (tracked
+  // automatically from every "excluded"/"penalty against" call, not just a manually-typed scouting
+  // note) is a genuine, quantified reason to attack that matchup — not a hunch.
+  if(mu.oppCareer && mu.oppCareer.exGiven>=2 && mu.oppCareer.meetings){ edge += 1.5; drivers.push(`${mu.opp} has picked up ${mu.oppCareer.exGiven} exclusion(s) in ${mu.oppCareer.meetings} logged meeting(s) — draws fouls easily, attack downhill`); }
   return { edge: Math.round(edge*10)/10, drivers };
 }
 // Score every matchup currently on the board and rank them, so the engine can point at the single
@@ -3601,7 +3617,7 @@ function buildTacticsSituation(game){
   const onField = our.map(t=>{
     const p = roster.find(rp=>rp.id===t.refId); if(!p) return null;
     const ownLog = ownPlayerGameLog(p, game.id);
-    return { ...p, fatigue: t.fatigue||'Low', gameExGiven: thisGameStat(game,p.id,'exclusion'), gameExDrawn: thisGameStat(game,p.id,'exclusion_drawn'), seasonExDrawn: seasonStat(p.id,'exclusion_drawn'), seasonExGiven: seasonStat(p.id,'exclusion'), seasonGoals: seasonStat(p.id,'goal'),
+    return { ...p, fatigue: t.fatigue||'Low', gameExGiven: thisGameStat(game,p.id,'exclusion'), gameExDrawn: thisGameStat(game,p.id,'exclusion_drawn'), gameTurnovers: thisGameStat(game,p.id,'turnover'), seasonExDrawn: seasonStat(p.id,'exclusion_drawn'), seasonExGiven: seasonStat(p.id,'exclusion'), seasonGoals: seasonStat(p.id,'goal'),
       careerVsOpp: careerFor(oppContext, p.name), goalsVsCurrentGoalie: oppGoalieEntry ? careerGoalsVsGoalie(oppContext, p.name, oppGoalieEntry.name) : 0,
       situationalVsOpp: oppContext ? oppContext.situational[(p.name||'').toLowerCase()] : null,
       form: computeStreak(ownLog), bigGames: findBigGames(ownLog), noteFlags: buildPlayerNoteTally(p, 5) };
@@ -3639,6 +3655,9 @@ function tacticsRuleEngine(sit, game){
     }
     if(p.fatigue==='High') push(`#${p.cap} ${p.name||''} is flagged High fatigue.`, 5, 'Fatigue', p.cap);
   });
+  // --- Live turnover risk: someone already coughing it up this game, right now ---
+  const turnoverRisk = [...sit.onField].sort((a,b)=>(b.gameTurnovers||0)-(a.gameTurnovers||0))[0];
+  if(turnoverRisk && turnoverRisk.gameTurnovers>=2) push(`#${turnoverRisk.cap} ${turnoverRisk.name||''} has turned it over ${turnoverRisk.gameTurnovers} times already this game — simplify their touches or get someone else more involved.`, 6, 'Live risk', turnoverRisk.cap);
 
   // Late and close overrides normal man-state play selection first — a 6v5 set with 90 seconds left
   // down 1 calls for the last-minute-tagged version of that set, not just any man-up play.
@@ -3686,6 +3705,13 @@ function tacticsRuleEngine(sit, game){
   // --- Season shooting efficiency among on-field players — a real quantitative edge, not a hunch ---
   const efficientShooter = sit.onField.map(p=>({p, shooting: seasonShootingPct(p.id)})).filter(x=>x.shooting && x.shooting.pct>=0.45).sort((a,b)=>b.shooting.pct-a.shooting.pct)[0];
   if(efficientShooter) push(`#${efficientShooter.p.cap} ${efficientShooter.p.name||''} is shooting ${Math.round(efficientShooter.shooting.pct*100)}% this season (${efficientShooter.shooting.goals}/${efficientShooter.shooting.attempts}) — a clearly above-average look, worth the extra pass to set it up.`, 5, 'Shooting efficiency', efficientShooter.p.cap);
+  // --- Sprint win rate — a real, quantified edge for who should take the opening sprint ---
+  const sprintAce = sit.onField.map(p=>({p, spr:seasonSprintPct(p.id)})).filter(x=>x.spr && x.spr.pct>=0.65).sort((a,b)=>b.spr.pct-a.spr.pct)[0];
+  if(sprintAce) push(`#${sprintAce.p.cap} ${sprintAce.p.name||''} wins ${Math.round(sprintAce.spr.pct*100)}% of sprints this season (${sprintAce.spr.won}/${sprintAce.spr.attempts}) — a reliable way to start the possession clock in our favor.`, 4, 'Sprint efficiency', sprintAce.p.cap);
+  // --- Season assist leader on the field — a proven facilitator worth running sets through ---
+  const playmaker = [...sit.onField].sort((a,b)=>seasonStat(b.id,'assist')-seasonStat(a.id,'assist'))[0];
+  const playmakerAssists = playmaker ? seasonStat(playmaker.id,'assist') : 0;
+  if(playmaker && playmakerAssists>=3) push(`#${playmaker.cap} ${playmaker.name||''} leads the floor with ${playmakerAssists} assists this season — run sets that get them the ball in the middle.`, 4, 'Playmaking', playmaker.cap);
 
   // --- Should someone else be in? One ranked, quantified comparison instead of three anecdotes —
   // every on-field player is scored against same-role bench players and only a real gap (>=3.0)
@@ -3741,6 +3767,11 @@ function tacticsRuleEngine(sit, game){
   }
   const goalieThreat = [...sit.onField].filter(p=>p.goalsVsCurrentGoalie>0).sort((a,b)=>b.goalsVsCurrentGoalie-a.goalsVsCurrentGoalie)[0];
   if(goalieThreat) push(`#${goalieThreat.cap} ${goalieThreat.name||''} has beaten ${sit.oppGoalieName} ${goalieThreat.goalsVsCurrentGoalie} time(s) before — keep testing them from the same spot.`, 6, 'Matchup history', goalieThreat.cap);
+  // --- The mirror image: has OUR goalie been beaten by this exact opponent before? ---
+  const ourGoalie = sit.onField.find(p=>p.wpPosition==='GK');
+  if(ourGoalie && ourGoalie.careerVsOpp && ourGoalie.careerVsOpp.scoredOn>=2){
+    push(`Our goalie #${ourGoalie.cap} ${ourGoalie.name||''} has been beaten ${ourGoalie.careerVsOpp.scoredOn} time(s) by this opponent across ${ourGoalie.careerVsOpp.meetings} logged meeting(s) — tighten up defensively in front of them today.`, 5, 'Matchup history', ourGoalie.cap);
+  }
 
   // --- This season's series vs this exact opponent (this team's own logged games) ---
   if(sit.seasonSeries){
