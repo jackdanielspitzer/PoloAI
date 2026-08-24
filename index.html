@@ -719,10 +719,17 @@
             </div>
             <div class="panel">
               <div class="data-row">
-                <h2>Game stats</h2>
+                <h2 id="gameStatsHeading">Game stats</h2>
                 <button class="ghost-btn" id="gameStatsToggle" style="display:none;font-size:11px;padding:6px 12px;"></button>
               </div>
               <div class="table-wrap"><table class="stats" id="gameStatsTable"></table></div>
+            </div>
+            <div class="panel" id="oppStatsPanel" style="display:none;">
+              <div class="data-row">
+                <h2 id="oppStatsHeading">Opponent stats</h2>
+                <button class="ghost-btn" id="oppStatsToggle" style="display:none;font-size:11px;padding:6px 12px;"></button>
+              </div>
+              <div class="table-wrap"><table class="stats" id="oppStatsTable"></table></div>
             </div>
             <div class="panel">
               <h2>Coach notes</h2>
@@ -899,10 +906,11 @@ const STAT_DEFS = [
   { key:'block', label:'Block', short:'BLK', tone:'good', patterns:['block','blocked']},
   { key:'save', label:'Save', short:'SV', tone:'good', patterns:['save','saved','stopped it','save by','great save']},
   { key:'steal', label:'Steal', short:'STL', tone:'good', patterns:['steal','stole','steel']},
-  { key:'turnover', label:'Turnover', short:'TO', tone:'bad', patterns:['turnover','turned it over','offensive foul','lost the ball','lost it','stolen']},
-  { key:'sprint_won', label:'Sprint won', short:'SPW', tone:'good', patterns:['sprint won','wins sprint','won the sprint']},
+  { key:'turnover', label:'Turnover', short:'TO', tone:'bad', patterns:['turnover','turned it over','offensive foul','offensive against','lost the ball','lost it','stolen']},
+  { key:'sprint_won', label:'Sprint won', short:'SPW', tone:'good', patterns:['sprint won','won sprint','wins sprint','won the sprint']},
   { key:'sprint_lost', label:'Sprint lost', short:'SPL', tone:'bad', patterns:['sprint lost','loses sprint','lost the sprint','lost sprint']},
   { key:'sprint_attempt', label:'Sprint attempt', short:'SPA', tone:'', patterns:[]},
+  { key:'scored_on', label:'Scored on', short:'SCON', tone:'bad', patterns:[]},
   { key:'rebound', label:'Rebound', short:'REB', tone:'good', patterns:['offensive rebound','o-board','put back','putback','rebound']},
 ];
 const ROLES = ['player','captain','coach','manager','statistician'];
@@ -1973,6 +1981,7 @@ function renderGame(){ const game = findGame(app.selectedGameId); if(!game){ nav
   renderGameQuarterTabs(game);
   renderGameFeed(game);
   renderGameStats(game);
+  renderOpponentStats(game);
   renderGameNotes(game);
   renderManualSelectors(game);
   document.getElementById('micStatus').textContent = app.listening ? `Listening Q${app.currentQ}` : 'Mic off';
@@ -2063,6 +2072,46 @@ function renderGameStats(game){ const table=document.getElementById('gameStatsTa
     toggle.textContent = showAll ? `Hide players with no stats (${inactiveCount})` : `Show full roster (${inactiveCount} with no stats yet)`;
     toggle.onclick = ()=>{ table.dataset.showAll = showAll ? '0' : '1'; renderGameStats(game); };
   }
+  const heading = document.getElementById('gameStatsHeading');
+  if(heading){ const team = findTeam(game.teamId); heading.textContent = (game.oppRoster && game.oppRoster.length) ? `Game stats — ${team ? team.name : 'Us'}` : 'Game stats'; }
+}
+
+function renderOpponentStats(game){
+  const panel = document.getElementById('oppStatsPanel');
+  const roster = game.oppRoster || [];
+  if(!roster.length){ if(panel) panel.style.display = 'none'; return; }
+  if(panel) panel.style.display = '';
+  const table = document.getElementById('oppStatsTable');
+  if(!table) return;
+  const allEvents = getGameEvents(game).filter(e=>e.stat_type!=='unmatched' && e.side==='opponent');
+  const head = '<thead><tr><th style="text-align:left;">Player</th>'+STAT_DEFS.map(d=>`<th>${d.short}</th>`).join('')+'<th>SH%</th><th>SPR%</th></tr></thead>';
+  const pctOf = (made, attempts) => attempts ? Math.min(100, Math.round((made/attempts)*100)) + '%' : '—';
+  const sprintWonIdx = STAT_DEFS.findIndex(d=>d.key==='sprint_won'), sprintAttIdx = STAT_DEFS.findIndex(d=>d.key==='sprint_attempt');
+  const withCounts = roster.map(player=>{
+    const counts = STAT_DEFS.map(def=>allEvents.filter(e=>String(e.playerCap)===String(player.cap) && e.stat_type===def.key).length);
+    return { player, counts, active: counts.some(c=>c>0) };
+  });
+  const inactiveCount = withCounts.filter(r=>!r.active).length;
+  const showAll = !!(table.dataset && table.dataset.showAll==='1');
+  const visible = showAll ? withCounts : withCounts.filter(r=>r.active);
+  const rows = visible.map(({player,counts})=>{
+    const shPct = pctOf(counts[0], counts[1]);
+    const sprPct = pctOf(counts[sprintWonIdx], counts[sprintAttIdx]);
+    return `<tr><td class="pcell">#${player.cap} ${player.name||''}</td>` + counts.map(c=>`<td>${c||''}</td>`).join('') + `<td class="shpct">${shPct}</td><td class="shpct">${sprPct}</td></tr>`;
+  }).join('');
+  const totals = STAT_DEFS.map(def=>allEvents.filter(e=>e.stat_type===def.key).length);
+  const totalPct = pctOf(totals[0], totals[1]);
+  const totalSprPct = pctOf(totals[sprintWonIdx], totals[sprintAttIdx]);
+  const totalRow = `<tr class="total"><td class="pcell">Opponent total</td>${totals.map(c=>`<td>${c}</td>`).join('')}<td>${totalPct}</td><td>${totalSprPct}</td></tr>`;
+  table.innerHTML = head + '<tbody>' + (rows || `<tr><td colspan="${STAT_DEFS.length+3}" style="color:var(--text-faint);">No opponent stats yet.</td></tr>`) + totalRow + '</tbody>';
+  const toggle = document.getElementById('oppStatsToggle');
+  if(toggle){
+    toggle.style.display = inactiveCount>0 ? 'inline-flex' : 'none';
+    toggle.textContent = showAll ? `Hide players with no stats (${inactiveCount})` : `Show full roster (${inactiveCount} with no stats yet)`;
+    toggle.onclick = ()=>{ table.dataset.showAll = showAll ? '0' : '1'; renderOpponentStats(game); };
+  }
+  const heading = document.getElementById('oppStatsHeading');
+  if(heading){ heading.textContent = `Opponent stats${game.opponent ? ` — ${game.opponent}` : ''}`; }
 }
 
 function renderManualSelectors(game){ const playerSelect = document.getElementById('manualPlayerSelect'); playerSelect.innerHTML = ''; const roster = getGameRoster(game);
@@ -2449,6 +2498,14 @@ function onlyMentionIsCredited(a1, a2, text){
   const byIdx = text.search(/\bby\b/);
   return byIdx!==-1 && a1.start > byIdx;
 }
+// A coach calling out a great/nice/good/perfect play wants that written down as its own note, not
+// just silently folded into an inline tag on the stat that's easy to skim past.
+const QUALITY_ADJ = /\b(great|nice|good|perfect|beautiful|amazing)\b/;
+function buildQualityNote(text, base, actor, verb, targetCap){
+  const m = QUALITY_ADJ.exec(text);
+  if(!m) return null;
+  return {...base, playerId:actor.playerId, playerCap:actor.cap, side:actor.side, stat_type:'note', note:`${m[1]} ${verb}${targetCap!=null?` against #${targetCap}`:''}`};
+}
 const COMPOUND_RULES = [
   // Assist is always same-team: "dark 3 assisted 4" (active) or "goal ... assisted by dark 3" (passive).
   { name:'assist_passive', test:t=>/assisted by/.test(t), build:(t,a1,a2,base,game)=>{
@@ -2481,7 +2538,9 @@ const COMPOUND_RULES = [
   // Steal is always opposite-team: whoever turned it over vs whoever stole it.
   { name:'steal_from', test:t=>/(stole|steal\w*).*from/.test(t), build:(t,a1,a2,base,game)=>{
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal'}];
-      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = turned.cap; events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover', vsCap:a1.cap}); }
+      let vsCap = null;
+      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); vsCap = turned.cap; events[0].vsCap = turned.cap; events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover', vsCap:a1.cap}); }
+      const note = buildQualityNote(t, base, a1, 'steal', vsCap); if(note) events.push(note);
       return events;
     } },
   { name:'stolen_by', test:t=>/stolen by/.test(t), build:(t,a1,a2,base,game)=>{
@@ -2492,7 +2551,9 @@ const COMPOUND_RULES = [
     } },
   { name:'steal_active', test:t=>/\b(stole|steals?)\b/.test(t), build:(t,a1,a2,base,game)=>{
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'steal'}];
-      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = turned.cap; events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover', vsCap:a1.cap}); }
+      let vsCap = null;
+      if(a2){ const turned = withSide(a2, oppositeSide(a1.side), game); vsCap = turned.cap; events[0].vsCap = turned.cap; events.push({...base, playerId:turned.playerId, playerCap:turned.cap, side:turned.side, stat_type:'turnover', vsCap:a1.cap}); }
+      const note = buildQualityNote(t, base, a1, 'steal', vsCap); if(note) events.push(note);
       return events;
     } },
   // Exclusion: "<attacker who drew it> excluded <defender who committed it>" — always opposite-team.
@@ -2534,10 +2595,34 @@ const COMPOUND_RULES = [
       const scorer = withSide(a2, a1.side, game);
       const assistEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'};
       const quality = /\b(great|nice|good|perfect|beautiful|amazing)\s+pass\b/.exec(t);
-      if(quality) assistEv.passQuality = quality[1];
+      const events = [assistEv];
+      if(quality){
+        assistEv.passQuality = quality[1];
+        // A coach calling out a great pass wants that written down as its own note, not just an
+        // inline tag on the assist that's easy to skim past.
+        events.push({...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'note', note:`${quality[1]} pass to #${scorer.cap}`});
+      }
       const goalEv = {...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'goal'};
       const manState = detectManStateContext(t); if(manState) goalEv.manState = manState;
-      return [assistEv, goalEv];
+      events.push(goalEv);
+      return events;
+    } },
+  // "X scores on a [great] pass from Y" — the passer is named after "from", always on the SAME
+  // side as the scorer (a pass is never cross-team). Checked before the plain "scored on Y" rule
+  // below, since this phrase also contains "scores on" but means something completely different —
+  // a same-team assist, not an opposing defender beaten.
+  { name:'scored_on_pass_from', test:t=>/\b(score|scores|scored|goal)\s+on\b/.test(t) && /\bpass\b/.test(t) && /\bfrom\b/.test(t), build:(t,a1,a2,base,game)=>{
+      const goalEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'goal'};
+      const manState = detectManStateContext(t); if(manState) goalEv.manState = manState;
+      const events = [goalEv];
+      if(a2){
+        const passer = withSide(a2, a1.side, game);
+        const assistEv = {...base, playerId:passer.playerId, playerCap:passer.cap, side:passer.side, stat_type:'assist'};
+        const quality = /\b(great|nice|good|perfect|beautiful|amazing)\s+pass\b/.exec(t);
+        if(quality){ assistEv.passQuality = quality[1]; events.push({...base, playerId:passer.playerId, playerCap:passer.cap, side:passer.side, stat_type:'note', note:`${quality[1]} pass to #${a1.cap}`}); }
+        events.push(assistEv);
+      }
+      return events;
     } },
   // "X scored/goal on Y" — Y is whoever was beaten (almost always the goalie). Only attach it when
   // Y resolved from an explicit color mention, never a bare number: "scored on 6v5" tokenizes "6"
@@ -2550,17 +2635,27 @@ const COMPOUND_RULES = [
       // must NOT fire is "scored on 6 v 5"/"scored on 6 on 5": there, "6" and "5" tokenize as bare
       // numbers too, but they're the man-state phrase, not a real player — detectManStateContext
       // catching that phrase is exactly the signal to skip attaching a defender here.
+      const events = [goalEv];
       if(a2 && !manState){
         const beaten = withSide(a2, oppositeSide(a1.side), game);
         goalEv.vsCap = beaten.cap;
+        events.push({...base, playerId:beaten.playerId, playerCap:beaten.cap, side:beaten.side, stat_type:'scored_on', vsCap:a1.cap});
       }
-      return [goalEv];
+      return events;
     } },
   // "X won the sprint against/over Y" — credits the loss to Y too, instead of a sprint win floating
   // with no opponent on record.
-  { name:'sprint_won_against', test:t=>/\b(won|wins)\s+(the\s+)?sprint\s+(against|over)\b/.test(t), build:(t,a1,a2,base,game)=>{
+  // "X won/lost the sprint against/over/to Y" — covers every natural preposition a coach reaches
+  // for, and always credits both sides of the contest instead of a lone win or loss with no
+  // opponent on record.
+  { name:'sprint_won_against', test:t=>/\b(won|wins)\s+(a\s+|the\s+)?sprint\s+(against|over|to)\b/.test(t), build:(t,a1,a2,base,game)=>{
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'sprint_won'}];
       if(a2){ const loser = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = loser.cap; events.push({...base, playerId:loser.playerId, playerCap:loser.cap, side:loser.side, stat_type:'sprint_lost', vsCap:a1.cap}); }
+      return events;
+    } },
+  { name:'sprint_lost_to', test:t=>/\b(lost|loses)\s+(a\s+|the\s+)?sprint\s+(against|over|to)\b/.test(t), build:(t,a1,a2,base,game)=>{
+      const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'sprint_lost'}];
+      if(a2){ const winner = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = winner.cap; events.push({...base, playerId:winner.playerId, playerCap:winner.cap, side:winner.side, stat_type:'sprint_won', vsCap:a1.cap}); }
       return events;
     } },
 ];
