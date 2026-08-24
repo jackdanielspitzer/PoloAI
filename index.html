@@ -2289,7 +2289,7 @@ function buildPlayerEventLog(player){
     [1,2,3,4].forEach(q=>{
       (game.quarters[q]||[]).forEach(ev=>{
         if(ev.playerId!==player.id) return;
-        const evTags=[]; if(ev.manState) evTags.push(ev.manState); if(ev.vsCap) evTags.push(`vs #${ev.vsCap}`); if(ev.passQuality) evTags.push(`${ev.passQuality} pass`);
+        const evTags=[]; if(ev.manState) evTags.push(ev.manState); if(ev.vsCap) evTags.push(`vs #${ev.vsCap}`); if(ev.passQuality) evTags.push(`${ev.passQuality} pass`); if(ev.missReason) evTags.push(ev.missReason); if(ev.assistTo) evTags.push(`to #${ev.assistTo}`);
         const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : ((statDef(ev.stat_type)||{}).label || ev.stat_type) + (evTags.length?` (${evTags.join(', ')})`:'');
         // Rows here are always OUR player's events (filtered by playerId above), so a vsCap always
         // points at the opponent — resolve it against this specific game's opponent roster instead
@@ -2512,18 +2512,73 @@ function buildQualityNote(text, base, actor, verb, targetCap){
   if(!m) return null;
   return {...base, playerId:actor.playerId, playerCap:actor.cap, side:actor.side, stat_type:'note', note:`${m[1]} ${verb}${targetCap!=null?` against #${targetCap}`:''}`};
 }
+// Finds which of the two spoken prepositions ("on"/"versus"/"against" = beaten party,
+// "by"/"from" = assister) most recently precedes a given mention, so a three-actor sentence like
+// "...versus 15 assisted on a great pass by 4" can be split correctly by role instead of by
+// position — #15 sits right after "versus" and #4 sits right after "by", even though a plain
+// left-to-right reading would otherwise mix them up.
+function nearestPrecedingPrepRole(text, mentionStart){
+  const preps = { on:'beaten', versus:'beaten', against:'beaten', vs:'beaten', by:'assister', from:'assister' };
+  let bestRole=null, bestIdx=-1;
+  Object.keys(preps).forEach(p=>{
+    const re = new RegExp('\\b'+p+'\\b','g'); let m;
+    while((m=re.exec(text))){ if(m.index < mentionStart && m.index > bestIdx){ bestIdx=m.index; bestRole=preps[p]; } }
+  });
+  return bestRole;
+}
 const COMPOUND_RULES = [
+  // Three actors in one breath: "dark 3 scores on a great drive versus 15 assisted on a great pass
+  // by 4" — a scorer, the defender/goalie beaten, AND the assister, all named together. This has to
+  // be checked before assist_passive/assist_active/scored_on below: those only ever look at the
+  // first two mentions, so a third named actor here would otherwise get silently dropped, or worse,
+  // mis-paired by raw position (e.g. crediting the beaten defender's cap as if they were the
+  // assister). Requires a clean, unambiguous role split; if the two candidate mentions don't
+  // resolve to one "beaten" and one "assister" each, this returns null and normal 2-actor rules
+  // handle it instead.
+  { name:'goal_assist_beaten_combo', test:t=>/\b(score|scores|scored|goal)\b/.test(t) && /\bassist/.test(t) && /\b(by|from)\b/.test(t) && /\b(on|versus|against|vs)\b/.test(t), build:(t,a1,a2,base,game,a3)=>{
+      if(!a2 || !a3) return null;
+      const roles = new Map([[a2,nearestPrecedingPrepRole(t,a2.start)],[a3,nearestPrecedingPrepRole(t,a3.start)]]);
+      const beatenM = [...roles.entries()].find(([,r])=>r==='beaten')?.[0];
+      const assisterM = [...roles.entries()].find(([,r])=>r==='assister')?.[0];
+      if(!beatenM || !assisterM || beatenM===assisterM) return null;
+      const scorer = a1;
+      const beaten = withSide(beatenM, oppositeSide(scorer.side), game);
+      const assister = withSide(assisterM, scorer.side, game);
+      const goalEv = {...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'goal', vsCap:beaten.cap};
+      const assistEv = {...base, playerId:assister.playerId, playerCap:assister.cap, side:assister.side, stat_type:'assist', vsCap:beaten.cap, assistTo:scorer.cap};
+      const beatenEv = {...base, playerId:beaten.playerId, playerCap:beaten.cap, side:beaten.side, stat_type:'scored_on', vsCap:scorer.cap};
+      const events = [assistEv, goalEv, beatenEv];
+      const driveMatch = /\b(great|nice|good|perfect|beautiful|amazing)\s+(drive|move|cut|fake|finish)\b/.exec(t);
+      if(driveMatch) events.push({...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'note', note:`${driveMatch[1]} ${driveMatch[2]}`});
+      const passMatch = /\b(great|nice|good|perfect|beautiful|amazing)\s+pass\b/.exec(t);
+      if(passMatch){ assistEv.passQuality = passMatch[1]; events.push({...base, playerId:assister.playerId, playerCap:assister.cap, side:assister.side, stat_type:'note', note:`${passMatch[1]} pass to #${scorer.cap}`}); }
+      const manState = detectManStateContext(t); if(manState) goalEv.manState = manState;
+      return events;
+    } },
   // Assist is always same-team: "dark 3 assisted 4" (active) or "goal ... assisted by dark 3" (passive).
   { name:'assist_passive', test:t=>/assisted by/.test(t), build:(t,a1,a2,base,game)=>{
       if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'}];
-      const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'goal'}];
-      if(a2){ const assister = withSide(a2, a1.side, game); events.push({...base, playerId:assister.playerId, playerCap:assister.cap, side:assister.side, stat_type:'assist'}); }
+      const goalEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'goal'};
+      const events=[goalEv];
+      if(a2){
+        const assister = withSide(a2, a1.side, game);
+        const assistEv = {...base, playerId:assister.playerId, playerCap:assister.cap, side:assister.side, stat_type:'assist', assistTo:a1.cap};
+        events.push(assistEv);
+        // "on a great drive/move/..." describes the SCORER's move; "great pass" describes the
+        // assister's — same split as assist_active, just for the passive "assisted by" phrasing.
+        const quality = /\b(great|nice|good|perfect|beautiful|amazing)\s+(pass|drive|move|cut|fake|finish)\b/.exec(t);
+        if(quality){
+          const [, adj, noun] = quality;
+          if(noun==='pass'){ assistEv.passQuality = adj; events.push({...base, playerId:assister.playerId, playerCap:assister.cap, side:assister.side, stat_type:'note', note:`${adj} pass to #${a1.cap}`}); }
+          else { events.push({...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'note', note:`${adj} ${noun}`}); }
+        }
+      }
       return events;
     } },
   { name:'assist_active', test:t=>/\bassists?(ed|ing)?\b/.test(t) && !/assisted by/.test(t), build:(t,a1,a2,base,game)=>{
       if(!a2) return null;
       const scorer = withSide(a2, a1.side, game);
-      const assistEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'};
+      const assistEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist', assistTo:scorer.cap};
       const goalEv = {...base, playerId:scorer.playerId, playerCap:scorer.cap, side:scorer.side, stat_type:'goal'};
       const events = [assistEv, goalEv];
       // "on a great drive/move/cut/fake/finish" describes the SCORER's move, not the pass itself —
@@ -2575,6 +2630,15 @@ const COMPOUND_RULES = [
     } },
   // Exclusion: "<attacker who drew it> excluded <defender who committed it>" — always opposite-team.
   // With only one cap named ("light 3 excluded"), that person is the one who committed it.
+  // Passive voice flips who committed it: "dark 15 IS EXCLUDED BY light 5" means dark15 got kicked
+  // out (they committed the foul) and light5 drew it — the opposite credit from the active phrasing
+  // just below. Checked first so it wins over exclusion_pair's broader active-voice test.
+  { name:'exclusion_passive', test:t=>/(exclud\w*|eject\w*)\s+by\b/.test(t)&&!/(drawn|drew|draws)/.test(t), build:(t,a1,a2,base,game)=>{
+      if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion_drawn'}];
+      const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
+      if(a2){ const drawer = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = drawer.cap; events.push({...base, playerId:drawer.playerId, playerCap:drawer.cap, side:drawer.side, stat_type:'exclusion_drawn', vsCap:a1.cap}); }
+      return events;
+    } },
   { name:'exclusion_pair', test:t=>/\b(exclud\w*|eject\w*)\b/.test(t)&&!/(drawn|drew|draws)/.test(t), build:(t,a1,a2,base,game)=>{
       if(a2){
         const committed = withSide(a2, oppositeSide(a1.side), game);
@@ -2583,6 +2647,16 @@ const COMPOUND_RULES = [
       return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
     } },
   // "Penalty against X" — X committed the foul, full stop. If a drawer is also named, credit them too.
+  // Passive voice flips it here too, same as exclusion above: "dark 3 IS PENALIZED BY light 5" /
+  // "dark 3 given a penalty BY light 5" means dark3 committed the foul (gets excluded) and light5
+  // drew it — the opposite credit from "dark 3 draws a penalty on light 5" just below. Checked
+  // first so it wins over penalty_against's broader test.
+  { name:'penalty_passive', test:t=>/\bpenaliz\w*\s+by\b/.test(t) || /\bpenalty\b.*\bby\b/.test(t), build:(t,a1,a2,base,game)=>{
+      if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn'}];
+      const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
+      if(a2){ const drawer = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = drawer.cap; events.push({...base, playerId:drawer.playerId, playerCap:drawer.cap, side:drawer.side, stat_type:'penalty_drawn', vsCap:a1.cap}); }
+      return events;
+    } },
   { name:'penalty_against', test:t=>/penalty (against|on)\b/.test(t), build:(t,a1,a2,base,game)=>{
       if(a2){
         const committed = withSide(a2, oppositeSide(a1.side), game);
@@ -2610,7 +2684,7 @@ const COMPOUND_RULES = [
   { name:'pass_to_goal', test:t=>/\bpass(ed)?\b/.test(t) && /\bto\b/.test(t) && (/\bgoal\b/.test(t) || /\bscores?\b/.test(t)), build:(t,a1,a2,base,game)=>{
       if(!a2) return null;
       const scorer = withSide(a2, a1.side, game);
-      const assistEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist'};
+      const assistEv = {...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'assist', assistTo:scorer.cap};
       const quality = /\b(great|nice|good|perfect|beautiful|amazing)\s+pass\b/.exec(t);
       const events = [assistEv];
       if(quality){
@@ -2634,7 +2708,7 @@ const COMPOUND_RULES = [
       const events = [goalEv];
       if(a2){
         const passer = withSide(a2, a1.side, game);
-        const assistEv = {...base, playerId:passer.playerId, playerCap:passer.cap, side:passer.side, stat_type:'assist'};
+        const assistEv = {...base, playerId:passer.playerId, playerCap:passer.cap, side:passer.side, stat_type:'assist', assistTo:a1.cap};
         const quality = /\b(great|nice|good|perfect|beautiful|amazing)\s+pass\b/.exec(t);
         if(quality){ assistEv.passQuality = quality[1]; events.push({...base, playerId:passer.playerId, playerCap:passer.cap, side:passer.side, stat_type:'note', note:`${quality[1]} pass to #${a1.cap}`}); }
         events.push(assistEv);
@@ -2707,19 +2781,22 @@ function detectManStateContext(text){
 }
 function parsePhrase(rawText, offsetMs){ const text=rawText.toLowerCase().trim().replace(/[.,!?]/g,''); if(/\b(undo|scratch that)\b/.test(text)) return {type:'undo'};
   const game = app.selectedGameId ? findGame(app.selectedGameId) : null;
-  const mentions=findMentions(text); let actor1=mentions[0]||null; const actor2=mentions[1]||null; const base={wall_time_offset_ms:offsetMs, raw_phrase:rawText};
+  const mentions=findMentions(text); let actor1=mentions[0]||null; const actor2=mentions[1]||null; const actor3=mentions[2]||null; const base={wall_time_offset_ms:offsetMs, raw_phrase:rawText};
   if(actor1){ app.lastVoiceActor = actor1; app.lastVoiceActorAt = Date.now(); }
-  if(actor1){ for(const rule of COMPOUND_RULES){ if(rule.test(text)){ const events=rule.build(text,actor1,actor2,base,game); if(events && events.length) return {type:'events', events}; } } }
+  if(actor1){ for(const rule of COMPOUND_RULES){ if(rule.test(text)){ const events=rule.build(text,actor1,actor2,base,game,actor3); if(events && events.length) return {type:'events', events}; } } }
   // Match against a filler-stripped copy too ("drew a penalty" needs to hit the "drew penalty"
   // pattern) — natural speech scatters "a"/"the"/"um" between the exact words a fixed phrase list
   // expects, and a real coach isn't going to talk like a search query.
   const normalizedText = cleanNoteText(text);
-  let matchedKey=null; for(const p of PATTERN_INDEX){ if(text.includes(p.phrase) || normalizedText.includes(p.phrase)){ matchedKey=p.key; break; } }
+  let matchedKey=null, matchedPhrase=null; for(const p of PATTERN_INDEX){ if(text.includes(p.phrase) || normalizedText.includes(p.phrase)){ matchedKey=p.key; matchedPhrase=p.phrase; break; } }
   const carriedActor = (!actor1 && app.lastVoiceActor && (Date.now()-app.lastVoiceActorAt)<=ACTOR_CARRY_FORWARD_MS) ? app.lastVoiceActor : null;
   if(matchedKey && (actor1||carriedActor)){
     const who=actor1||carriedActor;
     const ev = {...base, playerId:who.playerId, playerCap:who.cap, side:who.side, stat_type:matchedKey};
     if(matchedKey==='goal'){ const manState = detectManStateContext(text); if(manState) ev.manState = manState; }
+    // Tag WHICH miss it was ("sails the cage" vs "hits the bar" vs a plain "misses") so the feed
+    // shows the actual outcome instead of every non-blocked, non-scored attempt looking identical.
+    if(matchedKey==='shot_attempt' && matchedPhrase) ev.missReason = matchedPhrase;
     return {type:'events', events:[ev]};
   }
   // No recognized stat, but a player WAS named — treat whatever's left as a free-text coach note
@@ -2744,7 +2821,7 @@ function eventLabelInfo(ev){
   if(ev.stat_type==='unmatched'){ return {text:`"${ev.raw_phrase}" — not recognized`, tone:'', cap:'—'}; }
   if(ev.stat_type==='note'){ const cap=ev.playerCap ? `#${ev.playerCap}` : '?'; return {text:`Note: ${ev.note||ev.raw_phrase}`, tone:'note', cap}; }
   const def=statDef(ev.stat_type); const cap=ev.playerCap ? `#${ev.playerCap}` : '?';
-  const tags=[]; if(ev.manState) tags.push(ev.manState); if(ev.vsCap) tags.push(`vs #${ev.vsCap}`); if(ev.passQuality) tags.push(`${ev.passQuality} pass`);
+  const tags=[]; if(ev.manState) tags.push(ev.manState); if(ev.vsCap) tags.push(`vs #${ev.vsCap}`); if(ev.passQuality) tags.push(`${ev.passQuality} pass`); if(ev.missReason) tags.push(ev.missReason); if(ev.assistTo) tags.push(`to #${ev.assistTo}`);
   return {text:def.label+(tags.length?` (${tags.join(', ')})`:''), tone:def.tone, cap};
 }
 
@@ -2761,6 +2838,15 @@ function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); i
   // naming two players) — tag them all with the same batchId so "Undo last" removes the whole
   // phrase's worth of events, not just the last one and leaving the rest dangling.
   const batchId = 'b'+Date.now()+Math.random().toString(36).slice(2,6);
+  // A goal with no explicit man-state call is even strength by default — showing "even" instead of
+  // nothing removes the ambiguity between "even strength" and "man-state just wasn't tracked."
+  result.events.forEach(ev=>{ if(ev.stat_type==='goal' && !ev.manState) ev.manState='even'; });
+  // "Scores on a penalty" is a distinct, higher-value kind of goal (an awarded 5m shot) worth its
+  // own note in the feed, not indistinguishable from an ordinary field goal.
+  if(/\bpenalty\b/i.test(rawText)){
+    const penaltyGoal = result.events.find(e=>e.stat_type==='goal');
+    if(penaltyGoal) result.events.push({ wall_time_offset_ms:penaltyGoal.wall_time_offset_ms, raw_phrase:penaltyGoal.raw_phrase, playerId:penaltyGoal.playerId, playerCap:penaltyGoal.playerCap, side:penaltyGoal.side, stat_type:'note', note:'penalty shot goal' });
+  }
   expandShotAttempts(result.events).forEach(ev=>{
     // ensure side is explicit: roster-linked events are team, otherwise opponent
     if(!ev.side) ev.side = ev.playerId ? 'team' : 'opponent';
