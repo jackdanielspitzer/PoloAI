@@ -909,7 +909,7 @@ const STAT_DEFS = [
   { key:'steal', label:'Steal', short:'STL', tone:'good', patterns:['steal','stole','steel']},
   { key:'turnover', label:'Turnover', short:'TO', tone:'bad', patterns:['turnover','turned it over','offensive foul','offensive against','lost the ball','lost it','stolen']},
   { key:'sprint_won', label:'Sprint won', short:'SPW', tone:'good', patterns:['sprint won','won sprint','wins sprint','won the sprint']},
-  { key:'sprint_lost', label:'Sprint lost', short:'SPL', tone:'bad', patterns:['sprint lost','loses sprint','lost the sprint','lost sprint']},
+  { key:'sprint_lost', label:'Sprint lost', short:'SPL', tone:'bad', patterns:['sprint lost','loses sprint','looses sprint','lost the sprint','lost sprint']},
   { key:'sprint_attempt', label:'Sprint attempt', short:'SPA', tone:'', patterns:[]},
   { key:'scored_on', label:'Scored on', short:'SCON', tone:'bad', patterns:[]},
   { key:'rebound', label:'Rebound', short:'REB', tone:'good', patterns:['offensive rebound','o-board','put back','putback','rebound']},
@@ -2744,7 +2744,7 @@ const COMPOUND_RULES = [
       if(a2){ const loser = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = loser.cap; events.push({...base, playerId:loser.playerId, playerCap:loser.cap, side:loser.side, stat_type:'sprint_lost', vsCap:a1.cap}); }
       return events;
     } },
-  { name:'sprint_lost_to', test:t=>/\b(lost|loses)\s+(a\s+|the\s+)?sprint\s+(against|over|to)\b/.test(t), build:(t,a1,a2,base,game)=>{
+  { name:'sprint_lost_to', test:t=>/\b(lost|loses|looses)\s+(a\s+|the\s+)?sprint\s+(against|over|to)\b/.test(t), build:(t,a1,a2,base,game)=>{
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'sprint_lost'}];
       if(a2){ const winner = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = winner.cap; events.push({...base, playerId:winner.playerId, playerCap:winner.cap, side:winner.side, stat_type:'sprint_won', vsCap:a1.cap}); }
       return events;
@@ -2797,6 +2797,16 @@ function parsePhrase(rawText, offsetMs){ const text=rawText.toLowerCase().trim()
     // Tag WHICH miss it was ("sails the cage" vs "hits the bar" vs a plain "misses") so the feed
     // shows the actual outcome instead of every non-blocked, non-scored attempt looking identical.
     if(matchedKey==='shot_attempt' && matchedPhrase) ev.missReason = matchedPhrase;
+    // "Offensive against X" is a different kind of turnover (a carry/charge) than a lost ball or a
+    // stolen one — worth a short tag, same idea as the miss reason above.
+    if(matchedKey==='turnover' && (matchedPhrase==='offensive against' || matchedPhrase==='offensive foul')) ev.missReason = 'offensive';
+    // A single-actor match like "hits the bar" or "offensive against" has no dedicated two-actor
+    // compound rule of its own, so a second named player ("...versus light 1") would otherwise be
+    // silently dropped — this generic pass attaches it wherever the phrase actually names one.
+    if(actor2 && /\b(against|versus|vs)\b/.test(text)){
+      const opp = withSide(actor2, oppositeSide(who.side), game);
+      ev.vsCap = opp.cap;
+    }
     return {type:'events', events:[ev]};
   }
   // No recognized stat, but a player WAS named — treat whatever's left as a free-text coach note
