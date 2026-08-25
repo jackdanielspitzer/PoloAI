@@ -724,7 +724,7 @@
                 <button class="primary-btn action-btn" id="micBtn" onclick="toggleMic()">Start listening</button>
                 <span class="pill" id="micStatus">Mic off</span>
                 <button class="ghost-btn" id="undoBtn" onclick="undoEvent()" disabled>Undo last</button>
-                <button class="ghost-btn" onclick="openClockSync()">📷 Sync clock from camera</button>
+                <button class="ghost-btn" id="clockSyncBtn" onclick="openClockSync()">📷 Sync clock from camera</button>
                 <button class="ghost-btn" id="finalizeBtn" onclick="toggleGameFinal()" style="margin-left:auto;"></button>
               </div>
               <div class="form-row">
@@ -1069,7 +1069,7 @@ const app = {
 
 function blankTeam(){ return { id:'t'+Date.now()+Math.random().toString(36).slice(2,6), name:'', manager:'', coach:'', color:'Dark', mascot:'', primaryColor:'#0A2A4D', secondaryColor:'#FDB515', logo:null, players:[], games:[],
   claimStatus:'unclaimed', claimedByEmail:null, claimedByUserId:null, claimRequestedAt:null }; }
-function blankGame(teamId){ return { id:'g'+Date.now()+Math.random().toString(36).slice(2,6), teamId, opponent:'', date:'', time:'', location:'', status:'upcoming', quarters:{1:[],2:[],3:[],4:[]}, notes:'', createdAt:Date.now(), tacticalTokens:[], oppRoster:[], tacticalLog:[], ourColor:null, quarterStart:{} }; }
+function blankGame(teamId){ return { id:'g'+Date.now()+Math.random().toString(36).slice(2,6), teamId, opponent:'', date:'', time:'', location:'', status:'upcoming', quarters:{1:[],2:[],3:[],4:[]}, notes:'', createdAt:Date.now(), tacticalTokens:[], oppRoster:[], tacticalLog:[], ourColor:null, quarterStart:{}, extraPeriods:[], periodLengthMs:null, periodLengthMsByPeriod:{} }; }
 function blankPlayer(teamId){ return { id:'p'+Date.now()+Math.random().toString(36).slice(2,6), teamId, cap:'', name:'', role:'player', wpPosition:'', aliases:[] }; }
 
 // Paste your deployed Google Apps Script Web App URL here (Deploy > New deployment > Web app).
@@ -1179,7 +1179,67 @@ function findGame(id){ return app.games.find(g=>g.id===id) || null; }
 function findPlayer(id){ return app.teams.flatMap(t=>t.players).find(p=>p.id===id) || null; }
 function getTeamPlayers(teamId){ const team = findTeam(teamId); return team ? [...team.players].sort((a,b) => parseInt(a.cap||0,10) - parseInt(b.cap||0,10)) : []; }
 function getGameRoster(game){ return getTeamPlayers(game.teamId); }
-function getGameEvents(game, q = null){ return q ? (game.quarters[q]||[]) : [1,2,3,4].flatMap(n=>game.quarters[n]||[]); }
+const DEFAULT_PERIOD_MS = 8*60*1000;
+// Regulation is always Q1-4; extraPeriods holds anything added past that in the order it was
+// added — OT1, OT2, ... for sudden-death overtimes, then 'SO' for a penalty-shot shootout.
+function getGamePeriods(game){ return [1,2,3,4, ...(game.extraPeriods||[])]; }
+// Numeric periods render as "Q1".."Q4"; OT/SO keys are already the label a coach expects to see.
+function periodLabel(q){ return /^\d+$/.test(String(q)) ? 'Q'+q : q; }
+function periodHeading(q){ return /^\d+$/.test(String(q)) ? 'Quarter '+q : periodLabel(q); }
+// A shootout is a sequence of discrete penalty-shot attempts, not a timed period — there's no
+// running game clock to sync or display for it.
+function isClockedPeriod(q){ return q !== 'SO'; }
+// Comparable ordinal for a period key, so "is this Q3+" style checks keep working once OT/SO
+// exist — OT1 sorts right after Q4, SO sorts after any OT.
+function periodOrdinal(q){
+  if(/^\d+$/.test(String(q))) return Number(q);
+  const otMatch = /^OT(\d+)$/.exec(String(q));
+  if(otMatch) return 4 + Number(otMatch[1]);
+  if(q==='SO') return 999;
+  return Number(q);
+}
+function gamePeriodLengthMs(game, q){ return (game.periodLengthMsByPeriod && game.periodLengthMsByPeriod[q]) || game.periodLengthMs || DEFAULT_PERIOD_MS; }
+// Events store wall_time_offset_ms as elapsed time since the quarter started (counting up, so the
+// math stays simple everywhere else) — this converts that to the actual game-clock reading
+// (counting down) a coach would recognize from the scoreboard, for display only.
+function eventClockLabel(game, q, ev){
+  if(!isClockedPeriod(q) || typeof ev.wall_time_offset_ms !== 'number') return '—';
+  return fmtClockMs(Math.max(0, gamePeriodLengthMs(game, q) - ev.wall_time_offset_ms));
+}
+function addExtraPeriod(game, type){
+  if(!game.extraPeriods) game.extraPeriods = [];
+  let key = null;
+  if(type==='OT'){
+    const otCount = game.extraPeriods.filter(p=>/^OT\d+$/.test(p)).length;
+    key = 'OT'+(otCount+1);
+  } else if(type==='SO'){
+    if(game.extraPeriods.includes('SO')) return null; // only one shootout period makes sense
+    key = 'SO';
+  } else return null;
+  game.extraPeriods.push(key);
+  if(!game.quarters) game.quarters = {};
+  game.quarters[key] = [];
+  return key;
+}
+function addExtraPeriodPrompt(){
+  const game = findGame(app.selectedGameId); if(!game) return;
+  if(!hasManagePermission(game)){ alert('You do not have permission to modify periods for this game.'); return; }
+  const otCount = (game.extraPeriods||[]).filter(p=>/^OT\d+$/.test(p)).length;
+  const hasSO = (game.extraPeriods||[]).includes('SO');
+  const options = [`O = Add Overtime (OT${otCount+1})`];
+  if(!hasSO) options.push('S = Add Shootout');
+  const choice = prompt(`Add extra period:\n${options.join('\n')}\n\nType the letter:`);
+  if(!choice) return;
+  const c = choice.trim().toLowerCase();
+  let key = null;
+  if(c==='o') key = addExtraPeriod(game, 'OT');
+  else if(c==='s' && !hasSO) key = addExtraPeriod(game, 'SO');
+  if(!key) return;
+  app.currentQ = key;
+  saveState();
+  renderGame();
+}
+function getGameEvents(game, q = null){ return q ? (game.quarters[q]||[]) : getGamePeriods(game).flatMap(n=>game.quarters[n]||[]); }
 function getPlayerName(playerId){ const player = findPlayer(playerId); return player ? player.name || `#${player.cap}` : `#${playerId}`; }
 function deriveAliases(nameStr){ if(!nameStr) return []; const segments = nameStr.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean); const aliasSet = new Set(); segments.forEach(seg=>{ if(seg.length>=2 && !ALIAS_STOPWORDS.has(seg)) aliasSet.add(seg); seg.split(/\s+/).forEach(tok=>{ if(tok.length>=3 && !ALIAS_STOPWORDS.has(tok)) aliasSet.add(tok); }); }); return [...aliasSet]; }
 function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -2063,7 +2123,7 @@ function renderGame(){ const game = findGame(app.selectedGameId); if(!game){ nav
   const displayStatus = gameDisplayStatus(game);
   const isLive = displayStatus==='In progress';
   document.getElementById('boxStatus').innerHTML = `<span class="live-dot${isLive?' on':''}" id="liveDot"></span>${displayStatus}`;
-  document.getElementById('boxPeriod').textContent = `Q${app.currentQ}`;
+  document.getElementById('boxPeriod').textContent = periodLabel(app.currentQ);
   document.getElementById('boxEventCount').textContent = getGameEvents(game).length;
   const finalizeBtn = document.getElementById('finalizeBtn');
   if(finalizeBtn) finalizeBtn.textContent = game.status==='final' ? 'Reopen game' : 'Mark game final';
@@ -2083,7 +2143,9 @@ function renderGame(){ const game = findGame(app.selectedGameId); if(!game){ nav
   renderOpponentStats(game);
   renderGameNotes(game);
   renderManualSelectors(game);
-  document.getElementById('micStatus').textContent = app.listening ? `Listening Q${app.currentQ}` : 'Mic off';
+  document.getElementById('micStatus').textContent = app.listening ? `Listening ${periodLabel(app.currentQ)}` : 'Mic off';
+  const clockSyncBtn = document.getElementById('clockSyncBtn');
+  if(clockSyncBtn) clockSyncBtn.style.display = isClockedPeriod(app.currentQ) ? '' : 'none';
 }
 
 function hasManagePermission(game){ const u=currentUser(); if(!u) return false; // only manager, coach, or statistician can manage stats
@@ -2118,11 +2180,16 @@ function renderGameRoster(game){ const list = document.getElementById('gameRoste
 }
 
 function renderGameQuarterTabs(game){ const container=document.getElementById('gameQuarterTabs'); container.innerHTML='';
-  [1,2,3,4].forEach(q=>{
-    const btn=document.createElement('button'); btn.className='ghost-btn'+(app.currentQ===q ? ' active':''); btn.textContent=`Q${q}`;
+  getGamePeriods(game).forEach(q=>{
+    const btn=document.createElement('button'); btn.className='ghost-btn'+(app.currentQ===q ? ' active':''); btn.textContent=periodLabel(q);
     btn.onclick=()=>{ app.currentQ=q; renderGame(); };
     container.appendChild(btn);
   });
+  if(hasManagePermission(game)){
+    const addBtn=document.createElement('button'); addBtn.className='ghost-btn'; addBtn.textContent='+ OT/Shootout';
+    addBtn.onclick=()=>addExtraPeriodPrompt();
+    container.appendChild(addBtn);
+  }
 }
 
 function renderGameFeed(game){ const el=document.getElementById('gameFeed'); const events = game.quarters[app.currentQ] || [];
@@ -2133,7 +2200,7 @@ function renderGameFeed(game){ const el=document.getElementById('gameFeed'); con
     const capHtml = ev.side==='opponent'
       ? `<span class="cap team-light">Opp ${ev.playerCap || '?'}</span>`
       : `<span class="cap team-dark">#${ev.playerCap || '?'}</span>`;
-    row.innerHTML = `${capHtml}<span class="label ${info.tone}">${info.text}</span><span class="t">${fmtTime(ev.wall_time_offset_ms)}</span><button class="del">✕</button>`;
+    row.innerHTML = `${capHtml}<span class="label ${info.tone}">${info.text}</span><span class="t">${eventClockLabel(game, app.currentQ, ev)}</span><button class="del">✕</button>`;
     row.querySelector('.del').onclick = ()=>{ game.quarters[app.currentQ].splice(idx,1); saveState(); renderGame(); };
     el.appendChild(row);
   });
@@ -2238,8 +2305,8 @@ function renderPlayer(){ const player = findPlayer(app.selectedPlayerId); if(!pl
     if(liveGame){
       liveCard.style.display = '';
       const liveEvents = getGameEvents(liveGame).filter(ev=>ev.playerId===player.id && ev.stat_type!=='unmatched');
-      const latestQ = [4,3,2,1].find(q=>(liveGame.quarters[q]||[]).length>0) || 1;
-      document.getElementById('playerLiveGameLabel').textContent = `vs ${liveGame.opponent||'TBD'} — Q${latestQ}`;
+      const latestQ = [...getGamePeriods(liveGame)].reverse().find(q=>(liveGame.quarters[q]||[]).length>0) || 1;
+      document.getElementById('playerLiveGameLabel').textContent = `vs ${liveGame.opponent||'TBD'} — ${periodLabel(latestQ)}`;
       const nonZero = STAT_DEFS.map(def=>({def, count:liveEvents.filter(ev=>ev.stat_type===def.key).length})).filter(x=>x.count>0);
       document.getElementById('playerLiveGameStats').innerHTML = nonZero.length ? nonZero.map(x=>`<span style="margin-right:14px;"><b>${x.count}</b> ${x.def.short}</span>`).join('') : '<span style="color:var(--text-faint);">No stats yet this game.</span>';
       document.getElementById('playerLiveGameOpenBtn').onclick = ()=>navigate('game', liveGame.id, {manage:false});
@@ -2311,7 +2378,7 @@ function buildPlayerNoteTally(player, recentGames){
   let games = app.games.filter(g=>g.teamId===player.teamId);
   if(recentGames){ games = [...games].sort((a,b)=>(a.date||'').localeCompare(b.date||'')).slice(-recentGames); }
   games.forEach(game=>{
-    [1,2,3,4].forEach(q=>{
+    getGamePeriods(game).forEach(q=>{
       (game.quarters[q]||[]).forEach(ev=>{
         if(ev.playerId!==player.id || ev.stat_type!=='note' || !ev.note) return;
         const key = ev.note.trim().toLowerCase(); if(!key) return;
@@ -2410,7 +2477,7 @@ function buildPlayerEventLog(player){
     // Quarters are already processed in true chronological order, so a running tally here gives
     // the EXACT score at the moment of each event — no need to guess or borrow one.
     let teamScore=0, oppScore=0;
-    [1,2,3,4].forEach(q=>{
+    getGamePeriods(game).forEach(q=>{
       (game.quarters[q]||[]).forEach(ev=>{
         if(ev.stat_type==='goal'){ if((ev.side||'team')==='team') teamScore++; else oppScore++; }
         if(ev.playerId!==player.id) return;
@@ -2421,7 +2488,7 @@ function buildPlayerEventLog(player){
         // of hardcoding N/A and throwing away information the event already carries.
         let against = 'N/A';
         if(ev.vsCap!=null){ const r=(game.oppRoster||[]).find(rr=>String(rr.cap)===String(ev.vsCap)); against = (r && r.name) || `#${ev.vsCap}`; }
-        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:'Q'+q, time:fmtTime(ev.wall_time_offset_ms), score:`${teamScore}-${oppScore}`, event:eventLabel, against });
+        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:periodLabel(q), time:eventClockLabel(game, q, ev), score:`${teamScore}-${oppScore}`, event:eventLabel, against });
       });
     });
   });
@@ -2520,8 +2587,6 @@ function gameDisplayStatus(game){
   if(game.status==='final') return 'Final';
   return getGameEvents(game).length>0 ? 'In progress' : 'Upcoming';
 }
-function fmtTime(ms){ return typeof ms==='number' ? new Date(ms).toISOString().substr(14,5) : '--:--'; }
-
 // ---- Voice mention resolution ----
 // "dark 3" / "light 3" (team color + cap) is the primary way caps get called out live — nobody
 // reliably knows a teammate's or opponent's name mid-play, but everyone knows their own team's
@@ -3025,7 +3090,7 @@ function toggleMic(force){ if(force===false){ stopListening(); return; } if(!app
 function stopListening(){ app.listening=false; flushBuffer(); if(app.recognition){ try{ app.recognition.stop(); }catch(e){} } document.getElementById('micBtn').textContent='Start listening'; document.getElementById('micStatus').textContent='Mic off'; }
 
 // start mic only if user has permission for this game
-function startListening(){ const game=findGame(app.selectedGameId); if(!game || !hasManagePermission(game)){ alert('You do not have permission to start voice logging for this game.'); return; } if(!app.recognition) return; app.listening=true; if(!game.quarterStart) game.quarterStart={}; game.quarterStart[app.currentQ] = game.quarterStart[app.currentQ] || Date.now(); try{ app.recognition.start(); }catch(e){} document.getElementById('micBtn').textContent='Stop listening'; document.getElementById('micStatus').textContent=`Listening Q${app.currentQ}`; }
+function startListening(){ const game=findGame(app.selectedGameId); if(!game || !hasManagePermission(game)){ alert('You do not have permission to start voice logging for this game.'); return; } if(!app.recognition) return; app.listening=true; if(!game.quarterStart) game.quarterStart={}; game.quarterStart[app.currentQ] = game.quarterStart[app.currentQ] || Date.now(); try{ app.recognition.start(); }catch(e){} document.getElementById('micBtn').textContent='Stop listening'; document.getElementById('micStatus').textContent=`Listening ${periodLabel(app.currentQ)}`; }
 
 // ---- Camera-based scoreboard clock sync ----
 // Reads a physical game clock's digits directly off a live camera feed by checking which of the
@@ -3321,12 +3386,18 @@ async function applyClockSyncReading(remainingMs){
   await pullSharedStateFromServer(false);
   const game = findGame(app.selectedGameId); if(!game) return;
   if(!game.quarterStart) game.quarterStart = {};
+  if(!game.periodLengthMsByPeriod) game.periodLengthMsByPeriod = {};
   const elapsedMs = clockSyncPeriodMs - remainingMs;
   game.quarterStart[app.currentQ] = Date.now() - Math.max(0, elapsedMs);
+  // Remember the period length this reading was taken against so the game log can convert
+  // elapsed-since-start back into the actual scoreboard reading later, even after this camera
+  // session ends — per-period, since an overtime period often runs shorter than regulation.
+  game.periodLengthMsByPeriod[app.currentQ] = clockSyncPeriodMs;
+  game.periodLengthMs = game.periodLengthMs || clockSyncPeriodMs;
   clockSyncLastAppliedMs = remainingMs;
   saveState();
   const statusEl = document.getElementById('clockSyncStatus');
-  if(statusEl) statusEl.innerHTML = `<span style="color:var(--good);">✓ Synced</span> — Q${app.currentQ} set to ${fmtClockMs(remainingMs)} remaining.`;
+  if(statusEl) statusEl.innerHTML = `<span style="color:var(--good);">✓ Synced</span> — ${periodLabel(app.currentQ)} set to ${fmtClockMs(remainingMs)} remaining.`;
 }
 
 function addManualEvent(){ const game=findGame(app.selectedGameId); if(!game) return; const playerId=document.getElementById('manualPlayerSelect').value; const stat=document.getElementById('manualStatSelect').value; const side=document.getElementById('manualSideSelect')?document.getElementById('manualSideSelect').value:'team'; const oppCapInput=document.getElementById('manualOppCap')?document.getElementById('manualOppCap').value.trim():'';
@@ -3377,12 +3448,12 @@ function renderGameNotes(game){
   const el=document.getElementById('gameNotesList'); if(!el) return;
   const roster=getGameRoster(game);
   const notes=[];
-  [1,2,3,4].forEach(q=>{ (game.quarters[q]||[]).forEach(ev=>{ if(ev.stat_type==='note') notes.push({...ev, quarter:q}); }); });
+  getGamePeriods(game).forEach(q=>{ (game.quarters[q]||[]).forEach(ev=>{ if(ev.stat_type==='note') notes.push({...ev, quarter:q}); }); });
   if(notes.length===0){ el.innerHTML='<div style="color:var(--text-faint);font-size:12px;">No notes logged yet — say or type something like "dark 3 bad pass".</div>'; return; }
   el.innerHTML = notes.slice().reverse().map(n=>{
     const player = n.playerId ? roster.find(p=>p.id===n.playerId) : null;
     const who = player ? `#${player.cap} ${player.name||''}` : (n.playerCap ? `#${n.playerCap}` : 'Team');
-    return `<div class="item"><strong>${who}</strong> <span style="color:var(--text-faint);font-size:11px;">Q${n.quarter} · ${fmtTime(n.wall_time_offset_ms)}</span><div class="entity-meta"><span>${n.note}</span></div></div>`;
+    return `<div class="item"><strong>${who}</strong> <span style="color:var(--text-faint);font-size:11px;">${periodLabel(n.quarter)} · ${eventClockLabel(game, n.quarter, n)}</span><div class="entity-meta"><span>${n.note}</span></div></div>`;
   }).join('');
 }
 // Removes every event from the last logged action, not just the last array entry — a single
@@ -3519,7 +3590,7 @@ function renderTactics(){
   const team = findTeam(game.teamId);
   document.getElementById('tacticsHeading').textContent = `Tactics — ${team?team.name:''} vs ${game.opponent||'TBD'}`;
   document.getElementById('tacticsInfoOpponent').textContent = game.opponent ? `Opponent: ${game.opponent}` : '';
-  document.getElementById('tacticsInfoQ').textContent = `Quarter ${app.currentQ}`;
+  document.getElementById('tacticsInfoQ').textContent = periodHeading(app.currentQ);
 
   renderTacticsLiveStatus(game);
   renderTacticsPool(game);
@@ -3537,10 +3608,11 @@ function renderTacticsLiveStatus(game){
   const el = document.getElementById('tacticsLiveStatus'); if(!el) return;
   const score = computeGameScore(game);
   const elapsedMs = game.quarterStart && game.quarterStart[app.currentQ] ? Date.now()-game.quarterStart[app.currentQ] : null;
+  const remainingMs = (elapsedMs!=null && isClockedPeriod(app.currentQ)) ? Math.max(0, gamePeriodLengthMs(game, app.currentQ)-elapsedMs) : null;
   const events = getGameEvents(game).filter(e=>e.stat_type && e.stat_type!=='unmatched');
   const count = (side,key) => events.filter(e=>(e.side||'team')===side && e.stat_type===key).length;
   const line = (side,label) => `${label}: ${count(side,'goal')}G/${count(side,'shot_attempt')}ATT · ${count(side,'exclusion_drawn')} EXD/${count(side,'exclusion')} EXG · ${count(side,'steal')} STL/${count(side,'turnover')} TO`;
-  el.innerHTML = `<span><b>${score.team}-${score.opponent}</b> · Q${app.currentQ}${elapsedMs!=null?` · ${fmtTime(elapsedMs)} elapsed`:''}</span>` +
+  el.innerHTML = `<span><b>${score.team}-${score.opponent}</b> · ${periodLabel(app.currentQ)}${remainingMs!=null?` · ${fmtClockMs(remainingMs)} remaining`:''}</span>` +
     `<span>${line('team','Us')}</span><span>${line('opponent','Opp')}</span>`;
 }
 
@@ -3795,7 +3867,7 @@ function renderTacticsHistory(game){
   el.innerHTML='';
   [...game.tacticalLog].reverse().forEach(h=>{
     const div=document.createElement('div'); div.className='hist-item';
-    div.innerHTML = `<div class="hh">Q${h.quarter} · ${h.manstate}</div>${h.play} — ${h.outcome||'no outcome logged'}`;
+    div.innerHTML = `<div class="hh">${periodLabel(h.quarter)} · ${h.manstate}</div>${h.play} — ${h.outcome||'no outcome logged'}`;
     el.appendChild(div);
   });
 }
@@ -3891,7 +3963,7 @@ function buildLiveOpponentContext(game){
     const seen = new Set();
     const goalsThisGame = {};
     let teamScore=0, oppScore=0;
-    [1,2,3,4].forEach(q=>{
+    getGamePeriods(g).forEach(q=>{
       (g.quarters[q]||[]).forEach(ev=>{
         if(!ev.stat_type || ev.stat_type==='unmatched' || ev.playerCap==null) return;
         const side = ev.side||'team';
@@ -3906,7 +3978,7 @@ function buildLiveOpponentContext(game){
             if(!situational[key]) situational[key] = {name, byQuarter:{}, byMargin:{}, totalGoals:0};
             const sit = situational[key];
             sit.totalGoals++;
-            sit.byQuarter['Q'+q] = (sit.byQuarter['Q'+q]||0)+1;
+            sit.byQuarter[periodLabel(q)] = (sit.byQuarter[periodLabel(q)]||0)+1;
             const bucket = marginBucket(teamScore-oppScore);
             sit.byMargin[bucket] = (sit.byMargin[bucket]||0)+1;
             if(ev.vsCap!=null){
@@ -4029,7 +4101,7 @@ function ownPlayerGameLog(player, excludeGameId){
 function analyzeOpponentToday(game){
   const byCap = {};
   let calScore=0, oppScore=0;
-  [1,2,3,4].forEach(q=>{
+  getGamePeriods(game).forEach(q=>{
     (game.quarters[q]||[]).forEach(ev=>{
       if(ev.stat_type!=='goal') return;
       const side = ev.side||'team';
@@ -4038,7 +4110,7 @@ function analyzeOpponentToday(game){
       const cap = ev.playerCap || '?';
       if(!byCap[cap]) byCap[cap] = { cap, goals:0, quarters:{} };
       byCap[cap].goals++;
-      byCap[cap].quarters['Q'+q] = (byCap[cap].quarters['Q'+q]||0)+1;
+      byCap[cap].quarters[periodLabel(q)] = (byCap[cap].quarters[periodLabel(q)]||0)+1;
     });
   });
   const oppRoster = game.oppRoster||[];
@@ -4205,7 +4277,7 @@ function rankMatchupEdges(sit){
 }
 // Late and close changes what matters: proven late-game production and discipline history carry
 // more weight, and play selection should favor plays built for exactly this moment.
-function isCrunchTime(sit){ return sit.quarter>=4 && Math.abs(sit.diff)<=2; }
+function isCrunchTime(sit){ return periodOrdinal(sit.quarter)>=4 && Math.abs(sit.diff)<=2; }
 
 function buildTacticsSituation(game){
   const roster = getGameRoster(game);
@@ -4282,11 +4354,11 @@ function tacticsRuleEngine(sit, game){
   if(candidatePlays.length===0) candidatePlays = app.plays;
   const chosenPlay = candidatePlays[0] || {name:'No play matched', desc:'Add plays to the library for this situation.'};
 
-  if(crunch) push(`Q${sit.quarter}, margin of ${Math.abs(sit.diff)} — this is crunch time. Proven late-game production and discipline matter more here than a normal-time read would suggest.`, 9, 'Crunch time');
+  if(crunch) push(`${periodLabel(sit.quarter)}, margin of ${Math.abs(sit.diff)} — this is crunch time. Proven late-game production and discipline matter more here than a normal-time read would suggest.`, 9, 'Crunch time');
   if(sit.manstate==='man-up') push('We have an extra player in the water — run a set 6v5 rather than free-lancing.', 6, 'Man-state');
   if(sit.manstate==='man-down') push('We are down a player — priority is denying the high-percentage shot, not the steal.', 6, 'Man-state');
-  if(sit.diff<0 && sit.quarter>=3) push(`We're down ${Math.abs(sit.diff)} in Q${sit.quarter} — favor higher-tempo options over ball control.`, crunch?8:6, 'Score/quarter');
-  if(sit.diff>0 && sit.quarter>=3) push(`We're up ${sit.diff} in Q${sit.quarter} — favor clock control and safe offense.`, crunch?8:6, 'Score/quarter');
+  if(sit.diff<0 && periodOrdinal(sit.quarter)>=3) push(`We're down ${Math.abs(sit.diff)} in ${periodLabel(sit.quarter)} — favor higher-tempo options over ball control.`, crunch?8:6, 'Score/quarter');
+  if(sit.diff>0 && periodOrdinal(sit.quarter)>=3) push(`We're up ${sit.diff} in ${periodLabel(sit.quarter)} — favor clock control and safe offense.`, crunch?8:6, 'Score/quarter');
 
   // --- Momentum: what actually just happened in this game's event log ---
   const m = sit.momentum;
