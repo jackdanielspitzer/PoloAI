@@ -1044,7 +1044,6 @@ const app = {
   currentQ:1,
   listening:false,
   recognition:null,
-  quarterStart:{},
   pendingBuffer:'',
   pendingTimer:null,
   lastVoiceActor:null,
@@ -1055,7 +1054,7 @@ const app = {
 
 function blankTeam(){ return { id:'t'+Date.now()+Math.random().toString(36).slice(2,6), name:'', manager:'', coach:'', color:'Dark', mascot:'', primaryColor:'#0A2A4D', secondaryColor:'#FDB515', logo:null, players:[], games:[],
   claimStatus:'unclaimed', claimedByEmail:null, claimedByUserId:null, claimRequestedAt:null }; }
-function blankGame(teamId){ return { id:'g'+Date.now()+Math.random().toString(36).slice(2,6), teamId, opponent:'', date:'', time:'', location:'', status:'upcoming', quarters:{1:[],2:[],3:[],4:[]}, notes:'', createdAt:Date.now(), tacticalTokens:[], oppRoster:[], tacticalLog:[], ourColor:null }; }
+function blankGame(teamId){ return { id:'g'+Date.now()+Math.random().toString(36).slice(2,6), teamId, opponent:'', date:'', time:'', location:'', status:'upcoming', quarters:{1:[],2:[],3:[],4:[]}, notes:'', createdAt:Date.now(), tacticalTokens:[], oppRoster:[], tacticalLog:[], ourColor:null, quarterStart:{} }; }
 function blankPlayer(teamId){ return { id:'p'+Date.now()+Math.random().toString(36).slice(2,6), teamId, cap:'', name:'', role:'player', wpPosition:'', aliases:[] }; }
 
 // Paste your deployed Google Apps Script Web App URL here (Deploy > New deployment > Web app).
@@ -1142,7 +1141,7 @@ async function pullSharedStateFromServer(applyIfNewer){
 
 function startSharedStatePolling(){ setInterval(()=>pullSharedStateFromServer(true), 8000); }
 
-function loadState(){ try{ const raw = localStorage.getItem('poloai-app-state'); if(raw){ const stored = JSON.parse(raw); Object.assign(app, {page:'home', selectedTeamId:null, selectedGameId:null, selectedPlayerId:null, manageMode:false, currentQ:1, listening:false, recognition:null, quarterStart:{}, pendingBuffer:'', pendingTimer:null, lastVoiceActor:null, lastVoiceActorAt:0}, stored); } } catch(e){ console.warn('load failed',e); }
+function loadState(){ try{ const raw = localStorage.getItem('poloai-app-state'); if(raw){ const stored = JSON.parse(raw); Object.assign(app, {page:'home', selectedTeamId:null, selectedGameId:null, selectedPlayerId:null, manageMode:false, currentQ:1, listening:false, recognition:null, pendingBuffer:'', pendingTimer:null, lastVoiceActor:null, lastVoiceActorAt:0}, stored); } } catch(e){ console.warn('load failed',e); }
   // migrate: seed the opponents list from any opponent names already used on games,
   // so older saved data (from before there was a dropdown) still shows up as options.
   if(!Array.isArray(app.opponents)) app.opponents = [];
@@ -2966,7 +2965,7 @@ function eventLabelInfo(ev){
   return {text:def.label+(tags.length?` (${tags.join(', ')})`:''), tone:def.tone, cap};
 }
 
-function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); if(!game) return; if(!app.quarterStart[app.currentQ]) app.quarterStart[app.currentQ]=Date.now(); const offset=Date.now()-app.quarterStart[app.currentQ]; const result=parsePhrase(rawText, offset);
+function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); if(!game) return; if(!game.quarterStart) game.quarterStart={}; if(!game.quarterStart[app.currentQ]) game.quarterStart[app.currentQ]=Date.now(); const offset=Date.now()-game.quarterStart[app.currentQ]; const result=parsePhrase(rawText, offset);
   if(result.type==='undo'){ undoEvent(); return; }
   // prevent parsed/voice events from being applied by unauthorized users
   if(!hasManagePermission(game)){
@@ -3011,7 +3010,7 @@ function toggleMic(force){ if(force===false){ stopListening(); return; } if(!app
 function stopListening(){ app.listening=false; flushBuffer(); if(app.recognition){ try{ app.recognition.stop(); }catch(e){} } document.getElementById('micBtn').textContent='Start listening'; document.getElementById('micStatus').textContent='Mic off'; }
 
 // start mic only if user has permission for this game
-function startListening(){ const game=findGame(app.selectedGameId); if(!game || !hasManagePermission(game)){ alert('You do not have permission to start voice logging for this game.'); return; } if(!app.recognition) return; app.listening=true; app.quarterStart[app.currentQ] = app.quarterStart[app.currentQ] || Date.now(); try{ app.recognition.start(); }catch(e){} document.getElementById('micBtn').textContent='Stop listening'; document.getElementById('micStatus').textContent=`Listening Q${app.currentQ}`; }
+function startListening(){ const game=findGame(app.selectedGameId); if(!game || !hasManagePermission(game)){ alert('You do not have permission to start voice logging for this game.'); return; } if(!app.recognition) return; app.listening=true; if(!game.quarterStart) game.quarterStart={}; game.quarterStart[app.currentQ] = game.quarterStart[app.currentQ] || Date.now(); try{ app.recognition.start(); }catch(e){} document.getElementById('micBtn').textContent='Stop listening'; document.getElementById('micStatus').textContent=`Listening Q${app.currentQ}`; }
 
 // ---- Camera-based scoreboard clock sync ----
 // Reads a physical game clock's digits directly off a live camera feed by checking which of the
@@ -3027,6 +3026,7 @@ let clockSyncPeriodMs = 8*60*1000;
 let clockSyncInterval = null;
 let clockSyncHistory = []; // recent {ms,t} readings, for requiring a few consistent frames before trusting one
 let clockSyncDrawStart = null;
+let clockSyncLastAppliedMs = null; // avoid re-pulling/pushing on every tick once a reading has already been applied
 function parseClockToMs(str){
   const m = /^(\d+):(\d{1,2})$/.exec((str||'').trim());
   if(!m) return null;
@@ -3041,7 +3041,7 @@ async function openClockSync(){
   const game = findGame(app.selectedGameId);
   if(!game || !hasManagePermission(game)){ alert('You do not have permission to manage this game.'); return; }
   const m = document.getElementById('clockSyncModal'); m.style.display='flex'; m.classList.remove('hidden');
-  clockSyncBox = null; clockSyncHistory = [];
+  clockSyncBox = null; clockSyncHistory = []; clockSyncLastAppliedMs = null;
   document.getElementById('clockSyncStatus').textContent = 'Starting camera…';
   document.getElementById('clockSyncReading').textContent = '--:--';
   try{
@@ -3155,10 +3155,20 @@ function beginClockSyncReading(){
     }
   }, 200);
 }
-function applyClockSyncReading(remainingMs){
+async function applyClockSyncReading(remainingMs){
+  if(remainingMs === clockSyncLastAppliedMs) return; // clock hasn't moved since our last sync — nothing to do
+  if(!findGame(app.selectedGameId)) return;
+  // This is very likely a SEPARATE device from whoever's actively logging stats (that's the whole
+  // point — phone on the clock, laptop on the keyboard/mic) — and this app's shared state is a
+  // full-array push, not a per-field patch, so writing from a stale local copy could silently wipe
+  // out events the other device logged and hasn't pulled down here yet. Pulling fresh immediately
+  // before writing keeps that staleness window as small as possible.
+  await pullSharedStateFromServer(false);
   const game = findGame(app.selectedGameId); if(!game) return;
+  if(!game.quarterStart) game.quarterStart = {};
   const elapsedMs = clockSyncPeriodMs - remainingMs;
-  app.quarterStart[app.currentQ] = Date.now() - Math.max(0, elapsedMs);
+  game.quarterStart[app.currentQ] = Date.now() - Math.max(0, elapsedMs);
+  clockSyncLastAppliedMs = remainingMs;
   saveState();
   const statusEl = document.getElementById('clockSyncStatus');
   if(statusEl) statusEl.innerHTML = `<span style="color:var(--good);">✓ Synced</span> — Q${app.currentQ} set to ${fmtClockMs(remainingMs)} remaining.`;
@@ -3171,7 +3181,8 @@ function addManualEvent(){ const game=findGame(app.selectedGameId); if(!game) re
   const forced = app.statFor && app.statFor.gameId===game.id && typeof app.statFor.side!=='undefined' && app.statFor.side!==null;
   const enforcedSide = forced ? app.statFor.side : null;
   const finalSide = enforcedSide || side;
-  const offset=Date.now()- (app.quarterStart[app.currentQ] || (app.quarterStart[app.currentQ]=Date.now()));
+  if(!game.quarterStart) game.quarterStart={};
+  const offset=Date.now()- (game.quarterStart[app.currentQ] || (game.quarterStart[app.currentQ]=Date.now()));
   let evs = [];
   if(side==='team'){
     if(!playerId || !stat) return; const player=findPlayer(playerId); if(!player) return;
@@ -3197,7 +3208,8 @@ function addManualNote(){
   const noteInput=document.getElementById('manualNoteText');
   const note=noteInput.value.trim(); if(!note) return;
   const player=findPlayer(playerId); if(!player) return;
-  const offset=Date.now()-(app.quarterStart[app.currentQ] || (app.quarterStart[app.currentQ]=Date.now()));
+  if(!game.quarterStart) game.quarterStart={};
+  const offset=Date.now()-(game.quarterStart[app.currentQ] || (game.quarterStart[app.currentQ]=Date.now()));
   const ev={playerId, playerCap:player.cap, stat_type:'note', note, side:'team', wall_time_offset_ms:offset, raw_phrase:`(manual note) #${player.cap} ${note}`};
   game.quarters[app.currentQ].push(ev);
   noteInput.value='';
@@ -3369,7 +3381,7 @@ function renderTactics(){
 function renderTacticsLiveStatus(game){
   const el = document.getElementById('tacticsLiveStatus'); if(!el) return;
   const score = computeGameScore(game);
-  const elapsedMs = app.quarterStart && app.quarterStart[app.currentQ] ? Date.now()-app.quarterStart[app.currentQ] : null;
+  const elapsedMs = game.quarterStart && game.quarterStart[app.currentQ] ? Date.now()-game.quarterStart[app.currentQ] : null;
   const events = getGameEvents(game).filter(e=>e.stat_type && e.stat_type!=='unmatched');
   const count = (side,key) => events.filter(e=>(e.side||'team')===side && e.stat_type===key).length;
   const line = (side,label) => `${label}: ${count(side,'goal')}G/${count(side,'shot_attempt')}ATT · ${count(side,'exclusion_drawn')} EXD/${count(side,'exclusion')} EXG · ${count(side,'steal')} STL/${count(side,'turnover')} TO`;
