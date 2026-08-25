@@ -382,15 +382,24 @@
       </div>
       <div class="form-row full">
         <div>
-          <label for="clockSyncDigits">Digits on clock</label>
-          <select id="clockSyncDigits" onchange="clockSyncDigitCount=parseInt(this.value,10)">
-            <option value="3">M:SS (3 digits)</option>
-            <option value="4">MM:SS (4 digits)</option>
+          <label for="clockSyncDisplayType">Scoreboard type</label>
+          <select id="clockSyncDisplayType" onchange="onClockSyncDisplayTypeChange(this.value)">
+            <option value="segment">7-segment LED (classic digital clock)</option>
+            <option value="ocr">Video board / TV screen (regular text)</option>
           </select>
         </div>
         <div>
           <label for="clockSyncPeriodLength">Period length (MM:SS)</label>
           <input id="clockSyncPeriodLength" value="8:00" placeholder="8:00" onchange="clockSyncPeriodMs = parseClockToMs(this.value) || clockSyncPeriodMs;" />
+        </div>
+      </div>
+      <div class="form-row full" id="clockSyncDigitsWrap">
+        <div>
+          <label for="clockSyncDigits">Digits on clock</label>
+          <select id="clockSyncDigits" onchange="clockSyncDigitCount=parseInt(this.value,10)">
+            <option value="3">M:SS (3 digits)</option>
+            <option value="4">MM:SS (4 digits)</option>
+          </select>
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-faint);margin-bottom:8px;">Point the camera at the scoreboard, then drag a box around just the clock digits (not the score).</div>
@@ -3033,6 +3042,10 @@ let clockSyncInterval = null;
 let clockSyncHistory = []; // recent {ms,t} readings, for requiring a few consistent frames before trusting one
 let clockSyncDrawStart = null;
 let clockSyncLastAppliedMs = null; // avoid re-pulling/pushing on every tick once a reading has already been applied
+let clockSyncDisplayType = 'segment'; // 'segment' = classic 7-segment LED, 'ocr' = a TV/video-board rendering digits in a regular font
+let clockSyncOcrInterval = null;
+let tesseractWorker = null;
+let tesseractLoadPromise = null;
 function parseClockToMs(str){
   const m = /^(\d+):(\d{1,2})$/.exec((str||'').trim());
   if(!m) return null;
@@ -3096,13 +3109,24 @@ async function switchClockSyncCamera(deviceId){
 }
 function closeClockSync(){
   if(clockSyncInterval){ clearInterval(clockSyncInterval); clockSyncInterval=null; }
+  if(clockSyncOcrInterval){ clearInterval(clockSyncOcrInterval); clockSyncOcrInterval=null; }
   if(clockSyncStream){ clockSyncStream.getTracks().forEach(t=>t.stop()); clockSyncStream=null; }
   const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='none'; m.classList.add('hidden'); }
+}
+// Switching between a real segmented display and a video-board/TV rendering needs a completely
+// different read strategy (see beginClockSyncReading below) — the digit-count field only means
+// anything for the segment method, so it's hidden for the OCR path.
+function onClockSyncDisplayTypeChange(val){
+  clockSyncDisplayType = val;
+  const digitsWrap = document.getElementById('clockSyncDigitsWrap');
+  if(digitsWrap) digitsWrap.style.display = (val==='ocr') ? 'none' : '';
+  if(clockSyncStream) startClockSyncCalibration();
 }
 // Coach drags one box around the digits; everything past that (splitting it into per-digit cells,
 // reading segments) is automatic. Redoing this is the only manual step needed if the phone moves.
 function startClockSyncCalibration(){
   if(clockSyncInterval){ clearInterval(clockSyncInterval); clockSyncInterval=null; }
+  if(clockSyncOcrInterval){ clearInterval(clockSyncOcrInterval); clockSyncOcrInterval=null; }
   clockSyncBox = null;
   const statusEl = document.getElementById('clockSyncStatus');
   if(statusEl) statusEl.textContent = 'Drag a box around the clock digits, then release.';
@@ -3148,6 +3172,84 @@ function clockSegmentsToDigit(onSegs){
 function beginClockSyncReading(){
   const statusEl = document.getElementById('clockSyncStatus');
   if(statusEl) statusEl.textContent = 'Reading… hold steady on the clock.';
+  if(clockSyncDisplayType === 'ocr') beginClockSyncReadingOCR();
+  else beginClockSyncReadingSegment();
+}
+// Loads the OCR engine lazily — most coaches will use the classic segment reader and never need
+// this heavier download at all. Cached on window.Tesseract once loaded so re-opening the modal
+// doesn't re-fetch it.
+function loadTesseractScript(){
+  if(window.Tesseract) return Promise.resolve();
+  if(tesseractLoadPromise) return tesseractLoadPromise;
+  tesseractLoadPromise = new Promise((resolve, reject)=>{
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    script.onload = resolve;
+    script.onerror = ()=>{ tesseractLoadPromise = null; reject(new Error('Could not load the text-recognition library — check your internet connection.')); };
+    document.head.appendChild(script);
+  });
+  return tesseractLoadPromise;
+}
+async function getTesseractWorker(){
+  if(tesseractWorker) return tesseractWorker;
+  const statusEl = document.getElementById('clockSyncStatus');
+  if(statusEl) statusEl.textContent = 'Loading text recognition (first time only)…';
+  await loadTesseractScript();
+  tesseractWorker = await Tesseract.createWorker('eng');
+  await tesseractWorker.setParameters({ tessedit_char_whitelist: '0123456789:' });
+  return tesseractWorker;
+}
+// A video board / TV screen renders digits in a regular font — there's no fixed set of "segments"
+// to check on/off, so this reads the whole calibrated box as text instead, the same way you'd read
+// a printed number, and pulls a MM:SS-shaped pattern out of whatever it recognizes. Runs on a much
+// slower interval than the segment reader since each OCR pass costs real CPU time, not a handful
+// of pixel samples.
+function beginClockSyncReadingOCR(){
+  const video = document.getElementById('clockSyncVideo');
+  const work = document.createElement('canvas');
+  const wctx = work.getContext('2d', {willReadFrequently:true});
+  let busy = false;
+  clockSyncOcrInterval = setInterval(async ()=>{
+    if(busy || !clockSyncBox || !video.videoWidth) return;
+    busy = true;
+    try{
+      work.width = video.videoWidth; work.height = video.videoHeight;
+      wctx.drawImage(video, 0, 0, work.width, work.height);
+      // Crop to just the calibrated box and upscale — a tiny crop straight off the video frame
+      // reads far less reliably than the same crop blown up a bit first.
+      const scale = 3;
+      const crop = document.createElement('canvas');
+      crop.width = Math.max(1, Math.round(clockSyncBox.w*scale));
+      crop.height = Math.max(1, Math.round(clockSyncBox.h*scale));
+      crop.getContext('2d').drawImage(work, clockSyncBox.x, clockSyncBox.y, clockSyncBox.w, clockSyncBox.h, 0, 0, crop.width, crop.height);
+      const worker = await getTesseractWorker();
+      const { data:{ text } } = await worker.recognize(crop);
+      const m = /(\d{1,2})\s*[:.]\s*(\d{2})/.exec(text);
+      if(!m) return;
+      const minutes = parseInt(m[1],10), seconds = parseInt(m[2],10);
+      if(isNaN(minutes) || isNaN(seconds) || seconds>59) return;
+      const ms = (minutes*60+seconds)*1000;
+      const readingEl = document.getElementById('clockSyncReading');
+      if(readingEl) readingEl.textContent = fmtClockMs(ms);
+      const now = Date.now();
+      clockSyncHistory.push({ms, t:now});
+      // OCR runs far less often than the segment reader, so the "recent readings" window needs to
+      // be wider to still catch a couple of consistent samples before trusting one.
+      clockSyncHistory = clockSyncHistory.filter(h=>now-h.t < 4000);
+      if(clockSyncHistory.length>=2 && clockSyncHistory.every(h=>h.ms===clockSyncHistory[0].ms)){
+        applyClockSyncReading(ms);
+      }
+      const statusEl = document.getElementById('clockSyncStatus');
+      if(statusEl && statusEl.textContent.indexOf('✓ Synced')===-1) statusEl.textContent = 'Reading… hold steady on the clock.';
+    }catch(e){
+      console.warn('OCR read failed:', e);
+      const statusEl = document.getElementById('clockSyncStatus');
+      if(statusEl) statusEl.textContent = 'Text recognition error: ' + (e.message||e);
+      if(!window.Tesseract){ clearInterval(clockSyncOcrInterval); clockSyncOcrInterval=null; }
+    }finally{ busy = false; }
+  }, 1200);
+}
+function beginClockSyncReadingSegment(){
   const video = document.getElementById('clockSyncVideo');
   const work = document.createElement('canvas');
   const wctx = work.getContext('2d', {willReadFrequently:true});
