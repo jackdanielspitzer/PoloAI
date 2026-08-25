@@ -1183,6 +1183,11 @@ const DEFAULT_PERIOD_MS = 8*60*1000;
 // Regulation is always Q1-4; extraPeriods holds anything added past that in the order it was
 // added — OT1, OT2, ... for sudden-death overtimes, then 'SO' for a penalty-shot shootout.
 function getGamePeriods(game){ return [1,2,3,4, ...(game.extraPeriods||[])]; }
+// Regulation + OT only, never the shootout — a shootout is a discrete penalty-shot procedure, not
+// live play, so it must never inflate a player's or opponent's actual goal/stat totals. Used by
+// anything computing a real stat total (Game Stats table, career/season tallies, live scouting);
+// getGamePeriods (which includes 'SO') stays the one to use for browsing/display of what happened.
+function getStatPeriods(game){ return [1,2,3,4, ...(game.extraPeriods||[]).filter(p=>p!=='SO')]; }
 // Numeric periods render as "Q1".."Q4"; OT/SO keys are already the label a coach expects to see.
 function periodLabel(q){ return /^\d+$/.test(String(q)) ? 'Q'+q : q; }
 function periodHeading(q){ return /^\d+$/.test(String(q)) ? 'Quarter '+q : periodLabel(q); }
@@ -1239,7 +1244,7 @@ function addExtraPeriodPrompt(){
   saveState();
   renderGame();
 }
-function getGameEvents(game, q = null){ return q ? (game.quarters[q]||[]) : getGamePeriods(game).flatMap(n=>game.quarters[n]||[]); }
+function getGameEvents(game, q = null){ return q ? (game.quarters[q]||[]) : getStatPeriods(game).flatMap(n=>game.quarters[n]||[]); }
 function getPlayerName(playerId){ const player = findPlayer(playerId); return player ? player.name || `#${player.cap}` : `#${playerId}`; }
 function deriveAliases(nameStr){ if(!nameStr) return []; const segments = nameStr.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean); const aliasSet = new Set(); segments.forEach(seg=>{ if(seg.length>=2 && !ALIAS_STOPWORDS.has(seg)) aliasSet.add(seg); seg.split(/\s+/).forEach(tok=>{ if(tok.length>=3 && !ALIAS_STOPWORDS.has(tok)) aliasSet.add(tok); }); }); return [...aliasSet]; }
 function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -2479,7 +2484,9 @@ function buildPlayerEventLog(player){
     let teamScore=0, oppScore=0;
     getGamePeriods(game).forEach(q=>{
       (game.quarters[q]||[]).forEach(ev=>{
-        if(ev.stat_type==='goal'){ if((ev.side||'team')==='team') teamScore++; else oppScore++; }
+        // Matches the live scoreboard: a shootout goal bumps the displayed score by 0.1, not a
+        // full point, so this "score at the time" column stays consistent with what was on screen.
+        if(ev.stat_type==='goal'){ const w = q==='SO' ? 0.1 : 1; if((ev.side||'team')==='team') teamScore+=w; else oppScore+=w; }
         if(ev.playerId!==player.id) return;
         const evTags=[]; if(ev.manState) evTags.push(ev.manState); if(ev.vsCap) evTags.push(`vs #${ev.vsCap}`); if(ev.passQuality) evTags.push(`${ev.passQuality} pass`); if(ev.missReason) evTags.push(ev.missReason); if(ev.assistTo) evTags.push(`to #${ev.assistTo}`);
         const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : ((statDef(ev.stat_type)||{}).label || ev.stat_type) + (evTags.length?` (${evTags.join(', ')})`:'');
@@ -2488,7 +2495,7 @@ function buildPlayerEventLog(player){
         // of hardcoding N/A and throwing away information the event already carries.
         let against = 'N/A';
         if(ev.vsCap!=null){ const r=(game.oppRoster||[]).find(rr=>String(rr.cap)===String(ev.vsCap)); against = (r && r.name) || `#${ev.vsCap}`; }
-        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:periodLabel(q), time:eventClockLabel(game, q, ev), score:`${teamScore}-${oppScore}`, event:eventLabel, against });
+        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:periodLabel(q), time:eventClockLabel(game, q, ev), score:`${Math.round(teamScore*10)/10}-${Math.round(oppScore*10)/10}`, event:eventLabel, against });
       });
     });
   });
@@ -2579,7 +2586,21 @@ function renderPlayerEventLog(player){
     <tbody>${rows.map(r=>`<tr><td>${r.date||'—'}</td><td class="pcell">${r.opponent||'—'}</td><td>${r.quarter||'—'}</td><td>${r.time||'—'}</td><td>${r.score||'—'}</td><td>${r.event}</td><td>${r.against||'N/A'}</td></tr>`).join('')}</tbody>`;
 }
 
-function computeGameScore(game){ const all = getGameEvents(game); const teamGoals = all.filter(ev=>ev.stat_type==='goal' && (ev.side||'team')==='team').length; const oppGoals = all.filter(ev=>ev.stat_type==='goal' && ev.side==='opponent').length; return {team:teamGoals, opponent:oppGoals}; }
+// A shootout goal is worth a nominal 0.1 on the displayed scoreboard — enough to show who's ahead
+// while a shootout is underway — but it's added on top of the real regulation/OT score, never
+// folded into it, and getGameEvents() already keeps it out of anyone's actual goal stats.
+function computeGameScore(game){
+  const all = getGameEvents(game);
+  const teamGoals = all.filter(ev=>ev.stat_type==='goal' && (ev.side||'team')==='team').length;
+  const oppGoals = all.filter(ev=>ev.stat_type==='goal' && ev.side==='opponent').length;
+  const soEvents = (game.quarters && game.quarters['SO']) || [];
+  const teamSO = soEvents.filter(ev=>ev.stat_type==='goal' && (ev.side||'team')==='team').length;
+  const oppSO = soEvents.filter(ev=>ev.stat_type==='goal' && ev.side==='opponent').length;
+  return {
+    team: Math.round((teamGoals + teamSO*0.1)*10)/10,
+    opponent: Math.round((oppGoals + oppSO*0.1)*10)/10,
+  };
+}
 // game.status was only ever written once, at creation, to 'upcoming' — there's never been a code
 // path that updates it, so every game showed "Upcoming" forever, live or finished. Derive the real
 // state instead: explicit 'final' wins, otherwise any logged event means it's actually in progress.
@@ -3963,7 +3984,7 @@ function buildLiveOpponentContext(game){
     const seen = new Set();
     const goalsThisGame = {};
     let teamScore=0, oppScore=0;
-    getGamePeriods(g).forEach(q=>{
+    getStatPeriods(g).forEach(q=>{
       (g.quarters[q]||[]).forEach(ev=>{
         if(!ev.stat_type || ev.stat_type==='unmatched' || ev.playerCap==null) return;
         const side = ev.side||'team';
@@ -4101,7 +4122,7 @@ function ownPlayerGameLog(player, excludeGameId){
 function analyzeOpponentToday(game){
   const byCap = {};
   let calScore=0, oppScore=0;
-  getGamePeriods(game).forEach(q=>{
+  getStatPeriods(game).forEach(q=>{
     (game.quarters[q]||[]).forEach(ev=>{
       if(ev.stat_type!=='goal') return;
       const side = ev.side||'team';
