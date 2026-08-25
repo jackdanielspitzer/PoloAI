@@ -2244,7 +2244,11 @@ function renderPlayer(){ const player = findPlayer(app.selectedPlayerId); if(!pl
   renderPlayerEventLog(player);
 }
 // Strip the "TEAM #cap " prefix that box-score matchup strings use, leaving just the player name.
-function stripTeamPrefix(s){ const m=/^\S+\s+#\S+\s+(.+)$/.exec(s||''); return m ? m[1] : (s||''); }
+// "TEAM #cap NAME" strings from curated box scores — the team name is often multiple words
+// ("Long Beach State #8 Riley Catino"), so match everything up to the "#cap" marker instead of
+// assuming a single-word school name, which silently failed to strip anything for any school
+// with a space in its name.
+function stripTeamPrefix(s){ const m=/^.*?#\S+\s+(.+)$/.exec(s||''); return m ? m[1] : (s||''); }
 // Every event this player has ever been part of: live-tracked events from their own team's games
 // (chronological, but no specific opposing player captured at that granularity — shown as N/A), plus
 // every historical box-score matchup entry (any logged opponent, any season) where this player is on
@@ -2356,8 +2360,12 @@ function findDefaultGoalie(box, scorerNameLower){
 function buildPlayerEventLog(player){
   const rows = [];
   app.games.filter(g=>g.teamId===player.teamId).forEach(game=>{
+    // Quarters are already processed in true chronological order, so a running tally here gives
+    // the EXACT score at the moment of each event — no need to guess or borrow one.
+    let teamScore=0, oppScore=0;
     [1,2,3,4].forEach(q=>{
       (game.quarters[q]||[]).forEach(ev=>{
+        if(ev.stat_type==='goal'){ if((ev.side||'team')==='team') teamScore++; else oppScore++; }
         if(ev.playerId!==player.id) return;
         const evTags=[]; if(ev.manState) evTags.push(ev.manState); if(ev.vsCap) evTags.push(`vs #${ev.vsCap}`); if(ev.passQuality) evTags.push(`${ev.passQuality} pass`); if(ev.missReason) evTags.push(ev.missReason); if(ev.assistTo) evTags.push(`to #${ev.assistTo}`);
         const eventLabel = ev.stat_type==='note' ? `Note: ${ev.note||ev.raw_phrase}` : ((statDef(ev.stat_type)||{}).label || ev.stat_type) + (evTags.length?` (${evTags.join(', ')})`:'');
@@ -2366,7 +2374,7 @@ function buildPlayerEventLog(player){
         // of hardcoding N/A and throwing away information the event already carries.
         let against = 'N/A';
         if(ev.vsCap!=null){ const r=(game.oppRoster||[]).find(rr=>String(rr.cap)===String(ev.vsCap)); against = (r && r.name) || `#${ev.vsCap}`; }
-        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:'Q'+q, time:fmtTime(ev.wall_time_offset_ms), score:null, event:eventLabel, against });
+        rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:'Q'+q, time:fmtTime(ev.wall_time_offset_ms), score:`${teamScore}-${oppScore}`, event:eventLabel, against });
       });
     });
   });
@@ -2424,6 +2432,26 @@ function buildPlayerEventLog(player){
       });
     });
   }
+  // Curated (historical box score) rows sometimes lack a time/score for a specific matchup entry
+  // (e.g. an unpaired assist total). Rather than show a bare dash, borrow the value from whichever
+  // other row in the SAME game is closest in the game's own chronological order — live-tracked
+  // rows above already computed an exact score and always have a real time, so this only ever
+  // fires for the curated gaps it's meant for.
+  const byGame = {};
+  rows.forEach(r=>{ const key = (r.date||'')+'|'+(r.opponent||''); (byGame[key]=byGame[key]||[]).push(r); });
+  Object.values(byGame).forEach(group=>{
+    group.sort((a,b)=>(a.quarter||'').localeCompare(b.quarter||''));
+    ['time','score'].forEach(field=>{
+      const known = group.map((r,i)=>({i, val:r[field]})).filter(x=>x.val);
+      if(!known.length) return;
+      group.forEach((r,i)=>{
+        if(r[field]) return;
+        let best=known[0];
+        known.forEach(k=>{ if(Math.abs(k.i-i) < Math.abs(best.i-i)) best = k; });
+        r[field] = best.val;
+      });
+    });
+  });
   return rows.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 }
 function renderPlayerEventLog(player){
@@ -3353,6 +3381,34 @@ function saveGameNotes(gameId, value){ const g = findGame(gameId); if(!g) return
 // wired to any UI — this is the first thing that actually reads/writes it, as a real game-plan
 // field distinct from tacticsFreeNotes (live in-game scratch text) and the coach-notes event feed
 // (per-event notes logged during the game).
+// Auto-generated pre-game plan — pulled together from the same real data the in-game recommendation
+// engine already uses (season series vs this exact opponent, curated + live matchup history, hot
+// streaks, career production against this opponent), so a coach gets a real scouting starting
+// point before the whistle even blows, not a blank page. Recomputed fresh every render, never
+// stored — it always reflects whatever's been logged since the last time it was shown.
+function buildPregameSummary(game){
+  const lines = [];
+  if(!game.opponent) return ['Set an opponent for this game to generate a scouting summary.'];
+  const roster = getGameRoster(game);
+  const series = ownSeasonSeries(game);
+  if(series) lines.push(`This season vs ${game.opponent}: ${series.wins}-${series.losses} in ${series.count} prior meeting(s) (${series.results.map(r=>r.score).join(', ')}).`);
+  const oppContext = buildOpponentContext(game);
+  if(oppContext && oppContext.rivalry){
+    const riv = oppContext.rivalry;
+    lines.push(`All-time vs ${riv.label}: ${riv.record.wins}-${riv.record.losses}.`);
+    if(oppContext.lastMeeting) lines.push(`Last meeting (${oppContext.lastMeeting.date}): ${oppContext.lastMeeting.result==='W'?'Won':'Lost'} ${oppContext.lastMeeting.score}.`);
+  }
+  const hot = roster.map(p=>({p, form:computeStreak(ownPlayerGameLog(p, game.id))})).filter(x=>x.form && x.form.hot);
+  hot.forEach(x=>lines.push(`#${x.p.cap} ${x.p.name||''} is hot right now — averaging ${x.form.recentAvg.toFixed(1)} goals over the last ${x.form.ofLastN} games vs a season average of ${x.form.overallAvg.toFixed(1)}.`));
+  if(oppContext){
+    const leaders = roster.map(p=>({p, career:careerFor(oppContext, p.name)})).filter(x=>x.career && x.career.goals>0).sort((a,b)=>b.career.goals-a.career.goals);
+    if(leaders[0]) lines.push(`#${leaders[0].p.cap} ${leaders[0].p.name||''} has ${leaders[0].career.goals} goal(s) against this exact opponent across ${leaders[0].career.meetings} logged meeting(s) — a proven weapon here.`);
+  }
+  const topScorer = [...roster].sort((a,b)=>seasonStat(b.id,'goal')-seasonStat(a.id,'goal'))[0];
+  if(topScorer && seasonStat(topScorer.id,'goal')>0) lines.push(`Leading scorer this season: #${topScorer.cap} ${topScorer.name||''} with ${seasonStat(topScorer.id,'goal')} goal(s).`);
+  if(lines.length===0) lines.push('No matchup history or standout trends yet for this opponent — this fills in as more games get logged.');
+  return lines;
+}
 function renderCoaches(){
   const teamSelect = document.getElementById('coachesTeamSelect');
   if(teamSelect) teamSelect.innerHTML = app.teams.map(t=>`<option value="${t.id}" ${t.id===app.selectedTeamId?'selected':''}>${t.name}</option>`).join('');
@@ -3363,10 +3419,15 @@ function renderCoaches(){
   if(list){
     list.innerHTML = games.length ? games.map(g=>{
       const status = gameDisplayStatus(g);
+      const summary = buildPregameSummary(g);
       return `<li class="item" style="display:block;">
         <div class="data-row" style="margin-bottom:6px;">
           <div><strong>${g.date||'TBD'}</strong> vs ${g.opponent||'TBD'} <span style="color:var(--text-faint);font-size:11px;">${status}</span></div>
           <button class="ghost-btn" style="font-size:11px;padding:4px 10px;" onclick="navigate('game','${g.id}')">Open game</button>
+        </div>
+        <div style="background:rgba(0,168,255,.06);border:1px solid rgba(0,168,255,.2);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--cyan);margin-bottom:4px;">AI Game Plan</div>
+          <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text-dim);">${summary.map(s=>`<li>${s}</li>`).join('')}</ul>
         </div>
         <textarea class="small-input" style="width:100%;min-height:60px;" placeholder="Game plan, matchup notes, lineup ideas…" ${canManage?'':'disabled'} onblur="saveGameNotes('${g.id}', this.value)">${escAttr(g.notes)}</textarea>
       </li>`;
