@@ -295,16 +295,17 @@
     <div class="modal-panel">
       <div class="modal-header">
         <h3 id="userFormTitle">Create account</h3>
-        <button class="ghost-btn" onclick="hideUserForm()">✕</button>
+        <button class="ghost-btn" type="button" onclick="hideUserForm()">✕</button>
       </div>
-      <div style="display:flex; align-items:center; gap:14px; margin:2px 0 14px;">
+      <form id="userAuthForm" onsubmit="event.preventDefault(); saveUser();">
+      <div id="userNameRoleRow" style="display:flex; align-items:center; gap:14px; margin:2px 0 14px;">
         <div class="account-avatar-lg" id="userFormAvatarPreview"></div>
         <div style="font-size:12.5px; color:var(--text-faint);">Choose a profile icon or upload your own below</div>
       </div>
-      <div class="form-row full">
+      <div id="userNameRoleFields" class="form-row full">
         <div>
           <label for="userNameInput">Name</label>
-          <input id="userNameInput" placeholder="Full name or display" />
+          <input id="userNameInput" name="name" placeholder="Full name or display" autocomplete="name" />
         </div>
         <div>
           <label for="userRoleInput">Role</label>
@@ -319,14 +320,14 @@
       <div class="form-row full">
         <div>
           <label for="userEmailInput">Email</label>
-          <input id="userEmailInput" placeholder="you@team.org" type="email" />
+          <input id="userEmailInput" name="username" placeholder="you@team.org" type="email" autocomplete="username" />
         </div>
         <div>
           <label for="userPasswordInput">Password</label>
-          <input id="userPasswordInput" placeholder="Choose a password" type="password" />
+          <input id="userPasswordInput" name="password" placeholder="Choose a password" type="password" autocomplete="new-password" />
         </div>
       </div>
-      <div class="form-row full">
+      <div id="userTeamRow" class="form-row full">
         <div>
           <label for="userTeamAssign">Assign to team (optional)</label>
           <select id="userTeamAssign"></select>
@@ -336,17 +337,20 @@
           <label style="font-size:12px;color:var(--text-dim)"><input id="userLoginMode" type="checkbox" /> Already have an account (login)</label>
         </div>
       </div>
-      <div style="margin:10px 0 0;color:var(--text-dim);">Profile picture</div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
-        <div id="userPresetIcons"></div>
-        <input id="userPicUpload" type="file" accept="image/*" style="display:none" onchange="handleUserPicFile(event)" />
-        <button class="ghost-btn" onclick="document.getElementById('userPicUpload').click()">Upload picture</button>
+      <div id="userProfilePicSection">
+        <div style="margin:10px 0 0;color:var(--text-dim);">Profile picture</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+          <div id="userPresetIcons"></div>
+          <input id="userPicUpload" type="file" accept="image/*" style="display:none" onchange="handleUserPicFile(event)" />
+          <button class="ghost-btn" type="button" onclick="document.getElementById('userPicUpload').click()">Upload picture</button>
+        </div>
       </div>
       <div id="userFormError" style="display:none; margin-top:12px; padding:10px 12px; border-radius:8px; background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.3); color:#f87171; font-size:12.5px;"></div>
       <div class="data-row" style="justify-content:flex-end; gap:10px; margin-top:14px;">
-        <button class="primary-btn action-btn" id="userFormSaveBtn" onclick="saveUser()">Save / Login</button>
-        <button class="ghost-btn" onclick="hideUserForm()">Cancel</button>
+        <button class="primary-btn action-btn" id="userFormSaveBtn" type="submit">Save / Login</button>
+        <button class="ghost-btn" type="button" onclick="hideUserForm()">Cancel</button>
       </div>
+      </form>
     </div>
   </div>
   <!-- Modal: choose which side to take stats for when managing a game -->
@@ -953,10 +957,14 @@ const DEFAULT_PLAYS = [
 const PATTERN_INDEX = [];
 STAT_DEFS.forEach(def=>{ def.patterns.forEach(p=>PATTERN_INDEX.push({phrase:p, key:def.key})); });
 PATTERN_INDEX.sort((a,b)=>b.phrase.split(' ').length - a.phrase.split(' ').length || b.phrase.length - a.phrase.length);
+// Each SVG here is built with real "#" color values and encoded exactly once via
+// encodeURIComponent — a previous version hand-escaped "#" to "%23" inside the string AND
+// wrapped the whole thing in encodeURIComponent again, double-encoding the colors into garbage
+// the browser couldn't parse, so every preset silently rendered as a solid black square.
 const PRESET_ICONS = [
-  `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect rx="10" width="64" height="64" fill="%2300A8FF"/><circle cx="32" cy="26" r="10" fill="%23FFDD66"/><path d="M18 46c6-6 20-6 26 0v6H18v-6z" fill="%23003247"/></svg>')}`,
-  `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect rx="10" width="64" height="64" fill="%2317424C"/><path d="M16 38c8-8 32-8 40 0v6H16v-6z" fill="%23FF7A59"/><circle cx="22" cy="24" r="8" fill="%23FFF8EA"/></svg>')}`,
-  `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect rx="10" width="64" height="64" fill="%230F2B36"/><g fill="%2300A8FF"><path d="M6 40c10-8 42-8 52 0v6H6v-6z"/></g><circle cx="42" cy="20" r="7" fill="%23FFDD66"/></svg>')}`
+  `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect rx="10" width="64" height="64" fill="#0F2B36"/><circle cx="32" cy="32" r="19" fill="#FFD23F"/><path d="M32 13C22 21 22 43 32 51" stroke="#0F2B36" stroke-width="2.2" fill="none"/><path d="M32 13C42 21 42 43 32 51" stroke="#0F2B36" stroke-width="2.2" fill="none"/><path d="M13 32C21 24 43 24 51 32" stroke="#0F2B36" stroke-width="2.2" fill="none"/><path d="M13 32C21 40 43 40 51 32" stroke="#0F2B36" stroke-width="2.2" fill="none"/></svg>')}`,
+  `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect rx="10" width="64" height="64" fill="#1B2A1E"/><circle cx="19" cy="17" r="7.5" fill="#8B5A2B"/><circle cx="45" cy="17" r="7.5" fill="#8B5A2B"/><circle cx="32" cy="35" r="19" fill="#A9702F"/><ellipse cx="32" cy="41" rx="10" ry="7.5" fill="#E8C79A"/><circle cx="32" cy="40" r="3.2" fill="#2B1B0E"/><circle cx="23" cy="29" r="2.6" fill="#2B1B0E"/><circle cx="41" cy="29" r="2.6" fill="#2B1B0E"/></svg>')}`,
+  `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect rx="10" width="64" height="64" fill="#2B1010"/><path d="M13 44c9-6 29-6 38 0-1 6-3 10-8 10H21c-5 0-7-4-8-10z" fill="#C0392B"/><path d="M11 44c1-18 9-31 21-31s20 13 21 31c-6-3-13-5-21-5s-15 2-21 5z" fill="#D4AF37"/><path d="M16 43c1-15 7-25 16-25s15 10 16 25c-5-2-10-3-16-3s-11 1-16 3z" fill="#C0392B"/><rect x="29" y="29" width="6" height="18" fill="#7A1F1F"/></svg>')}`
 ];
 const NUM_WORDS = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10, eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20, ate:8, sex:6, free:3, tree:3, sicks:6, sick:6, nien:9, fife:5};
 // Hesitation sounds a coach makes mid-call ("dark... um... eight") that a real speech transcript
@@ -1122,7 +1130,7 @@ async function hashPassword(pwd){ if(!pwd) return null; const buf = new TextEnco
 function initials(name){ if(!name) return '?'; const parts=name.trim().split(/\s+/).slice(0,2); return parts.map(w=>w[0].toUpperCase()).join('') || '?'; }
 function updateUserFormAvatarPreview(){ const preview=document.getElementById('userFormAvatarPreview'); if(!preview) return; const mount=document.getElementById('userPresetIcons'); const pic = mount && (mount.dataset.uploaded || mount.dataset.selected); if(pic){ preview.innerHTML = `<img src="${pic}" alt=""/>`; } else { const name = document.getElementById('userNameInput').value.trim(); preview.textContent = name ? initials(name) : '?'; } }
 
-function renderPresetIcons(){ const mount = document.getElementById('userPresetIcons'); if(!mount) return; mount.innerHTML=''; PRESET_ICONS.forEach((d)=>{ const b=document.createElement('button'); b.className='ghost-btn'; b.style.padding='4px'; b.innerHTML=`<img src="${d}" style="width:40px;height:40px;border-radius:6px;display:block;"/>`; b.onclick=()=>{ document.querySelectorAll('#userPresetIcons button').forEach(x=>x.style.outline=''); b.style.outline='2px solid var(--cyan)'; mount.dataset.selected = d; delete mount.dataset.uploaded; updateUserFormAvatarPreview(); }; mount.appendChild(b); });
+function renderPresetIcons(){ const mount = document.getElementById('userPresetIcons'); if(!mount) return; mount.innerHTML=''; PRESET_ICONS.forEach((d)=>{ const b=document.createElement('button'); b.className='ghost-btn'; b.type='button'; b.style.padding='4px'; b.innerHTML=`<img src="${d}" style="width:40px;height:40px;border-radius:6px;display:block;"/>`; b.onclick=()=>{ document.querySelectorAll('#userPresetIcons button').forEach(x=>x.style.outline=''); b.style.outline='2px solid var(--cyan)'; mount.dataset.selected = d; delete mount.dataset.uploaded; updateUserFormAvatarPreview(); }; mount.appendChild(b); });
   updateUserFormAvatarPreview();
 }
 
@@ -1146,22 +1154,35 @@ function showUserForm(opts){
   const m=document.getElementById('userFormPanel'); m.style.display='flex'; m.classList.remove('hidden');
   renderUserTeamAssign(); resetUserForm();
   const title=document.getElementById('userFormTitle'); const saveBtn=document.getElementById('userFormSaveBtn'); const loginRow=document.getElementById('userLoginModeRow');
+  const pwField = document.getElementById('userPasswordInput');
+  // Logging in needs nothing but an email and password — name/role/team/profile-picture only
+  // matter when creating or editing an identity, so a plain "log in" no longer makes someone
+  // wade through fields that don't apply to them.
+  const setIdentityFieldsVisible = (visible) => {
+    const row = document.getElementById('userNameRoleRow'); if(row) row.style.display = visible ? 'flex' : 'none';
+    ['userNameRoleFields','userTeamRow','userProfilePicSection'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display = visible ? '' : 'none'; });
+  };
   if(_editUserId){
     const u = app.users.find(x=>x.id===_editUserId);
     title.textContent = 'My account'; saveBtn.textContent='Save changes'; loginRow.style.display='none';
+    setIdentityFieldsVisible(true);
+    pwField.placeholder = 'Leave blank to keep current password'; pwField.autocomplete = 'new-password';
     if(u){
       document.getElementById('userNameInput').value = u.name||'';
       document.getElementById('userRoleInput').value = u.role||'player';
       document.getElementById('userEmailInput').value = u.email||'';
-      document.getElementById('userPasswordInput').placeholder = 'Leave blank to keep current password';
       document.getElementById('userTeamAssign').value = u.teamId || '';
       if(u.profilePic) document.getElementById('userPresetIcons').dataset.uploaded = u.profilePic;
     }
   } else if(opts.loginMode){
     title.textContent = 'Log in'; saveBtn.textContent='Log in'; loginRow.style.display='none';
+    setIdentityFieldsVisible(false);
+    pwField.placeholder = 'Password'; pwField.autocomplete = 'current-password';
     document.getElementById('userLoginMode').checked = true;
   } else {
     title.textContent = 'Create account'; saveBtn.textContent='Save / Login'; loginRow.style.display='';
+    setIdentityFieldsVisible(true);
+    pwField.placeholder = 'Choose a password'; pwField.autocomplete = 'new-password';
   }
   renderPresetIcons();
   document.getElementById('userNameInput').oninput = updateUserFormAvatarPreview;
