@@ -3224,6 +3224,13 @@ function beginClockSyncReadingOCR(){
       crop.getContext('2d').drawImage(work, clockSyncBox.x, clockSyncBox.y, clockSyncBox.w, clockSyncBox.h, 0, 0, crop.width, crop.height);
       const worker = await getTesseractWorker();
       const { data:{ text } } = await worker.recognize(crop);
+      // Surface exactly what OCR is seeing on every pass, success or not — a silent "Reading…"
+      // forever gives no way to tell "box is misaligned" from "glare" from "font it can't parse".
+      const statusEl = document.getElementById('clockSyncStatus');
+      if(statusEl && statusEl.textContent.indexOf('✓ Synced')===-1){
+        const seenLabel = (text||'').trim().replace(/\s+/g,' ').slice(0,24) || '(nothing readable)';
+        statusEl.innerHTML = `Reading… hold steady on the clock.<br><span style="opacity:.65;font-size:12px;">Last seen: "${seenLabel}"</span>`;
+      }
       const m = /(\d{1,2})\s*[:.]\s*(\d{2})/.exec(text);
       if(!m) return;
       const minutes = parseInt(m[1],10), seconds = parseInt(m[2],10);
@@ -3239,8 +3246,6 @@ function beginClockSyncReadingOCR(){
       if(clockSyncHistory.length>=2 && clockSyncHistory.every(h=>h.ms===clockSyncHistory[0].ms)){
         applyClockSyncReading(ms);
       }
-      const statusEl = document.getElementById('clockSyncStatus');
-      if(statusEl && statusEl.textContent.indexOf('✓ Synced')===-1) statusEl.textContent = 'Reading… hold steady on the clock.';
     }catch(e){
       console.warn('OCR read failed:', e);
       const statusEl = document.getElementById('clockSyncStatus');
@@ -3278,6 +3283,14 @@ function beginClockSyncReadingSegment(){
       const threshold = lo + (hi-lo)*0.5;
       const onSegs = new Set(Object.keys(lum).filter(s=>lum[s] >= threshold));
       digits.push(clockSegmentsToDigit(onSegs));
+    }
+    // Show what each digit position actually decoded to on every pass — ✗ means no usable
+    // contrast at that spot (box drifted off the display, or too dim/glarey to read), a wrong
+    // digit means the box or digit count doesn't line up with the real display.
+    const statusEl = document.getElementById('clockSyncStatus');
+    if(statusEl && statusEl.textContent.indexOf('✓ Synced')===-1){
+      const digitsLabel = digits.map(d=>d===null?'✗':d).join(' ');
+      statusEl.innerHTML = `Reading… hold steady on the clock.<br><span style="opacity:.65;font-size:12px;">Digits seen: ${digitsLabel}</span>`;
     }
     if(digits.some(d=>d===null)) return;
     const secondsDigitCount = 2;
