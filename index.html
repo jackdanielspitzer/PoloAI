@@ -394,6 +394,12 @@
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-faint);margin-bottom:8px;">Point the camera at the scoreboard, then drag a box around just the clock digits (not the score).</div>
+      <div class="form-row full" id="clockSyncCameraRow" style="display:none;">
+        <div>
+          <label for="clockSyncCameraSelect">Camera</label>
+          <select id="clockSyncCameraSelect" onchange="switchClockSyncCamera(this.value)"></select>
+        </div>
+      </div>
       <div style="position:relative;width:100%;background:#000;border-radius:8px;overflow:hidden;">
         <video id="clockSyncVideo" autoplay playsinline muted style="width:100%;display:block;"></video>
         <canvas id="clockSyncOverlay" style="position:absolute;top:0;left:0;width:100%;height:100%;"></canvas>
@@ -3049,9 +3055,43 @@ async function openClockSync(){
     const video = document.getElementById('clockSyncVideo');
     video.srcObject = clockSyncStream;
     await video.play();
+    await populateClockSyncCameraList();
     startClockSyncCalibration();
   }catch(e){
     document.getElementById('clockSyncStatus').textContent = 'Could not access the camera: ' + (e.message||e);
+  }
+}
+// Device labels are only readable AFTER permission has been granted at least once (a browser
+// privacy rule), so this always runs post-getUserMedia, never before. A laptop with something
+// like Continuity Camera or a phone-as-webcam app installed will list the phone as its own
+// selectable entry here — the site can request "the environment-facing camera" as a hint, but
+// only an explicit picker lets a person actually choose their phone over the built-in webcam.
+async function populateClockSyncCameraList(){
+  const row = document.getElementById('clockSyncCameraRow');
+  const select = document.getElementById('clockSyncCameraSelect');
+  if(!row || !select) return;
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter(d=>d.kind==='videoinput');
+  if(cams.length < 2){ row.style.display = 'none'; return; }
+  const activeTrack = clockSyncStream && clockSyncStream.getVideoTracks()[0];
+  const activeId = activeTrack ? activeTrack.getSettings().deviceId : null;
+  select.innerHTML = cams.map((c,i)=>`<option value="${c.deviceId}" ${c.deviceId===activeId?'selected':''}>${c.label || 'Camera '+(i+1)}</option>`).join('');
+  row.style.display = '';
+}
+async function switchClockSyncCamera(deviceId){
+  document.getElementById('clockSyncStatus').textContent = 'Switching camera…';
+  if(clockSyncInterval){ clearInterval(clockSyncInterval); clockSyncInterval=null; }
+  if(clockSyncStream){ clockSyncStream.getTracks().forEach(t=>t.stop()); }
+  try{
+    clockSyncStream = await navigator.mediaDevices.getUserMedia({ video:{ deviceId:{exact:deviceId} }, audio:false });
+    const video = document.getElementById('clockSyncVideo');
+    video.srcObject = clockSyncStream;
+    await video.play();
+    // The digit box was calibrated against the OLD camera's framing — it means nothing on a
+    // different physical camera, so recalibrating is mandatory, not optional, after a switch.
+    startClockSyncCalibration();
+  }catch(e){
+    document.getElementById('clockSyncStatus').textContent = 'Could not switch camera: ' + (e.message||e);
   }
 }
 function closeClockSync(){
