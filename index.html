@@ -760,6 +760,13 @@
             <input id="playerPhotoUpload" type="file" accept="image/*" style="display:none" onchange="handlePlayerPhotoFile(event)" />
           </div>
         </div>
+        <div class="panel" id="playerLiveGameCard" style="display:none;margin-bottom:14px;background:rgba(0,168,255,.08);border:1px solid rgba(0,168,255,.3);">
+          <div class="data-row">
+            <div><span style="color:var(--cyan);font-weight:700;">● LIVE</span> <span id="playerLiveGameLabel"></span></div>
+            <button class="ghost-btn" id="playerLiveGameOpenBtn" style="font-size:11px;padding:4px 10px;">Open game</button>
+          </div>
+          <div id="playerLiveGameStats" style="margin-top:8px;font-size:13px;"></div>
+        </div>
         <div class="stats-grid" id="playerSummaryCards"></div>
         <div class="panel" style="margin-top:18px;">
           <div class="data-row">
@@ -833,16 +840,9 @@
           </div>
           <div>
             <div class="panel">
-              <h2>Plays library</h2>
-              <div id="tacticsPlaysList"></div>
-              <input class="small-input" id="newPlayName" placeholder="Play name" style="margin-bottom:6px;width:100%;">
-              <input class="small-input" id="newPlayTags" placeholder="Tags e.g. man-up, last-minute" style="margin-bottom:6px;width:100%;">
-              <textarea class="small-input" id="newPlayDesc" placeholder="What it is / when to run it" style="width:100%;min-height:56px;"></textarea>
-              <button class="ghost-btn" style="width:100%;margin-top:6px;" onclick="addPlay()">+ add play</button>
-            </div>
-            <div class="panel">
               <h2>Situation notes</h2>
               <textarea class="small-input" id="tacticsFreeNotes" placeholder="Free-text situation notes (e.g. their best driver looks tired, ref is calling it tight) — folded into the recommendation" style="width:100%;min-height:80px;"></textarea>
+              <div style="margin-top:10px;font-size:11.5px;color:var(--text-faint);">Manage the plays library (used in recommendations above) on the <a href="#" onclick="navigate('coaches'); return false;" style="color:var(--cyan);">Coaches &amp; Manager</a> page.</div>
             </div>
           </div>
         </div>
@@ -857,6 +857,30 @@
         <div class="panel">
           <h2>Tactical history — this game</h2>
           <div id="tacticsHistoryList"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="coachesPage" class="page hidden">
+      <div class="panel">
+        <div class="data-row">
+          <h2>Coaches &amp; Manager</h2>
+          <select class="mini-select" id="coachesTeamSelect" onchange="navigate('coaches', this.value)"></select>
+        </div>
+        <div style="font-size:12.5px;color:var(--text-faint);">Pre-game notes and the shared plays library — everything to prep before stepping on deck.</div>
+      </div>
+      <div class="panel">
+        <h2>Pre-game notes</h2>
+        <ul id="coachesGameNotesList" class="minimal-list"></ul>
+      </div>
+      <div class="panel">
+        <h2>Plays library</h2>
+        <div id="tacticsPlaysList"></div>
+        <div id="coachesPlaysAddRow">
+          <input class="small-input" id="newPlayName" placeholder="Play name" style="margin-bottom:6px;width:100%;">
+          <input class="small-input" id="newPlayTags" placeholder="Tags e.g. man-up, last-minute" style="margin-bottom:6px;width:100%;">
+          <textarea class="small-input" id="newPlayDesc" placeholder="What it is / when to run it" style="width:100%;min-height:56px;"></textarea>
+          <button class="ghost-btn" style="width:100%;margin-top:6px;" onclick="addPlay()">+ add play</button>
         </div>
       </div>
     </section>
@@ -1116,7 +1140,7 @@ function statDef(key){ return STAT_DEFS.find(d=>d.key===key) || {label:key, shor
 function opposite(teamColor){ return teamColor.toLowerCase()==='dark' ? 'Light' : 'Dark'; }
 
 function renderNav(){ const nav = document.getElementById('mainNav'); nav.innerHTML = '';
-  [{id:'home',label:'Home'},{id:'teams',label:'Teams'},{id:'games',label:'Games'},{id:'tactics',label:'Tactics'},{id:'data',label:'Data'}].forEach(item=>{
+  [{id:'home',label:'Home'},{id:'teams',label:'Teams'},{id:'games',label:'Games'},{id:'coaches',label:'Coaches & Manager'},{id:'tactics',label:'Tactics'},{id:'data',label:'Data'}].forEach(item=>{
     const btn = document.createElement('button'); btn.textContent=item.label; btn.className = app.page===item.id ? 'active':''; btn.onclick = ()=>navigate(item.id); nav.appendChild(btn);
   });
   const actions = document.getElementById('appActions'); actions.innerHTML = '';
@@ -1266,6 +1290,11 @@ function navigate(page, id = null, meta = {}){
   if(page==='games'){ if(id) app.selectedTeamId = id; }
   if(page==='game'){ app.selectedGameId = id || app.selectedGameId; app.manageMode = meta.manage || false; if(!app.selectedGameId) return; }
   if(page==='tactics'){ app.selectedGameId = id || app.selectedGameId; if(!app.selectedGameId){ app.page='games'; renderAll(); return; } if(!hasManagePermission(findGame(app.selectedGameId))){ alert('You need manage access to this game to use the tactics board.'); app.page='game'; renderAll(); return; } }
+  if(page==='coaches'){
+    const cu = currentUser();
+    if(!cu || !['coach','manager','statistician'].includes(cu.role)){ alert('You need a coach, manager, or statistician account to use this page.'); app.page='home'; renderAll(); return; }
+    app.selectedTeamId = id || app.selectedTeamId || cu.teamId || (app.teams[0] && app.teams[0].id) || null;
+  }
   if(page==='player'){ app.selectedPlayerId = id || app.selectedPlayerId; }
   if(page!=='game') stopListening();
   if(page==='home') app.selectedTeamId = app.selectedGameId = app.selectedPlayerId = null;
@@ -1287,6 +1316,7 @@ function renderAll(){ document.querySelectorAll('.page').forEach(sec=>sec.classL
   if(app.page==='game'){ renderGame(); }
   if(app.page==='player'){ renderPlayer(); }
   if(app.page==='tactics'){ renderTactics(); }
+  if(app.page==='coaches'){ renderCoaches(); }
   if(app.page==='data'){ renderDataPage(); }
 }
 
@@ -2150,6 +2180,25 @@ function renderPlayer(){ const player = findPlayer(app.selectedPlayerId); if(!pl
   if(photoMount){
     photoMount.style.background = player.photo ? 'transparent' : (team && team.primaryColor ? `linear-gradient(135deg, ${team.primaryColor}, ${team.secondaryColor||team.primaryColor})` : '');
     photoMount.innerHTML = player.photo ? `<img src="${player.photo}" alt="${player.name||'Player'} photo" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />` : `<span style="font-size:22px;font-weight:800;">#${player.cap||'?'}</span>`;
+  }
+  // A game in progress is worth its own callout with THIS game's own numbers, not just folded
+  // silently into the season/lifetime totals below — and since the shared-state poller already
+  // re-renders whichever page is open every 8s, this section updates on its own on any device
+  // that has the player's page open while another device is logging events for this same game.
+  const liveGame = app.games.find(g=>g.teamId===player.teamId && g.status!=='final' && getGameEvents(g).some(ev=>ev.playerId===player.id));
+  const liveCard = document.getElementById('playerLiveGameCard');
+  if(liveCard){
+    if(liveGame){
+      liveCard.style.display = '';
+      const liveEvents = getGameEvents(liveGame).filter(ev=>ev.playerId===player.id && ev.stat_type!=='unmatched');
+      const latestQ = [4,3,2,1].find(q=>(liveGame.quarters[q]||[]).length>0) || 1;
+      document.getElementById('playerLiveGameLabel').textContent = `vs ${liveGame.opponent||'TBD'} — Q${latestQ}`;
+      const nonZero = STAT_DEFS.map(def=>({def, count:liveEvents.filter(ev=>ev.stat_type===def.key).length})).filter(x=>x.count>0);
+      document.getElementById('playerLiveGameStats').innerHTML = nonZero.length ? nonZero.map(x=>`<span style="margin-right:14px;"><b>${x.count}</b> ${x.def.short}</span>`).join('') : '<span style="color:var(--text-faint);">No stats yet this game.</span>';
+      document.getElementById('playerLiveGameOpenBtn').onclick = ()=>navigate('game', liveGame.id, {manage:false});
+    } else {
+      liveCard.style.display = 'none';
+    }
   }
   const history = app.games.filter(g=>getGameEvents(g).some(ev=>ev.playerId===player.id));
   const seasonStats = buildPlayerSeasonStats(player);
@@ -3097,7 +3146,6 @@ function renderTactics(){
   renderTacticsPool(game);
   renderTacticsOppList(game);
   initOppRosterSource();
-  renderTacticsPlays();
   renderTacticsHistory(game);
   renderRivalryHistory(game);
   updateTacticsManstate(game);
@@ -3290,6 +3338,44 @@ function addPlay(){
   saveState(); renderTacticsPlays();
 }
 function deletePlay(id){ app.plays = app.plays.filter(p=>p.id!==id); saveState(); renderTacticsPlays(); }
+// Same shape as hasManagePermission(game), just keyed on a team instead of a specific game — the
+// Coaches & Manager page isn't tied to one game, so it needs the team-level version of the check.
+function hasTeamManagePermission(team){
+  const u = currentUser(); if(!u || !team) return false;
+  if(u.role==='statistician') return true;
+  if(u.role==='manager') return u.teamId ? u.teamId===team.id : true;
+  if(u.role==='coach') return u.teamId===team.id;
+  return false;
+}
+function escAttr(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function saveGameNotes(gameId, value){ const g = findGame(gameId); if(!g) return; g.notes = value; saveState(); }
+// The pre-game "notes" field has existed on every game object since blankGame() but was never
+// wired to any UI — this is the first thing that actually reads/writes it, as a real game-plan
+// field distinct from tacticsFreeNotes (live in-game scratch text) and the coach-notes event feed
+// (per-event notes logged during the game).
+function renderCoaches(){
+  const teamSelect = document.getElementById('coachesTeamSelect');
+  if(teamSelect) teamSelect.innerHTML = app.teams.map(t=>`<option value="${t.id}" ${t.id===app.selectedTeamId?'selected':''}>${t.name}</option>`).join('');
+  const team = findTeam(app.selectedTeamId);
+  const canManage = hasTeamManagePermission(team);
+  const games = app.games.filter(g=>g.teamId===app.selectedTeamId).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const list = document.getElementById('coachesGameNotesList');
+  if(list){
+    list.innerHTML = games.length ? games.map(g=>{
+      const status = gameDisplayStatus(g);
+      return `<li class="item" style="display:block;">
+        <div class="data-row" style="margin-bottom:6px;">
+          <div><strong>${g.date||'TBD'}</strong> vs ${g.opponent||'TBD'} <span style="color:var(--text-faint);font-size:11px;">${status}</span></div>
+          <button class="ghost-btn" style="font-size:11px;padding:4px 10px;" onclick="navigate('game','${g.id}')">Open game</button>
+        </div>
+        <textarea class="small-input" style="width:100%;min-height:60px;" placeholder="Game plan, matchup notes, lineup ideas…" ${canManage?'':'disabled'} onblur="saveGameNotes('${g.id}', this.value)">${escAttr(g.notes)}</textarea>
+      </li>`;
+    }).join('') : '<li class="item" style="color:var(--text-faint);">No games scheduled for this team yet.</li>';
+  }
+  renderTacticsPlays();
+  const addRow = document.getElementById('coachesPlaysAddRow');
+  if(addRow) addRow.style.display = canManage ? '' : 'none';
+}
 
 function renderTacticsHistory(game){
   const el = document.getElementById('tacticsHistoryList');
