@@ -75,6 +75,7 @@
   .panel p{color:var(--text-dim); line-height:1.8; margin:0;}
   .hero{padding:36px 0 18px; position:relative;}
   .hero-kicker{display:inline-flex; align-items:center; gap:8px; font-family:'JetBrains Mono'; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--cyan); background:var(--cyan-glow); border:1px solid var(--cyan-dim); padding:6px 14px; border-radius:999px; margin-bottom:18px;}
+  .hero-tagline{font-family:'Archivo Black',sans-serif; font-size:17px; letter-spacing:.01em; color:var(--cyan); margin:0 0 10px;}
   .hero h1{font-size:42px; line-height:1.08; margin:0 0 16px; letter-spacing:-.01em;}
   .hero h1 em{font-style:normal; color:var(--cyan);}
   .hero p{max-width:680px; font-size:16px; line-height:1.7; color:var(--text-dim);}
@@ -435,8 +436,9 @@
     <section id="homePage" class="page active">
       <div class="hero">
         <div class="hero-kicker">🤿 Built for water polo</div>
-        <h1>Know everything about every player and team —<br>before the <em>first whistle</em>.</h1>
-        <p>PoloAI is a live team hub and coaching brain for water polo — rosters, schedules, and a real-time box score tracker, plus a tactics engine that reads years of play-by-play history and this game's live events to tell you who's hot, who's struggled against a specific defender, and what actually tends to happen in this exact situation. Voice-tracked stats go beyond the box score too — log anything in your own words, not just what's on a fixed list.</p>
+        <div class="hero-tagline">PoloAI — Intelligence That Wins.</div>
+        <h1>Know everything about your team and opponent before the whistle blows.<br>Know what to do the moment it does.<br>Innovative statistics tracking, customized through the lens of your team's goals.</h1>
+        <p>Track live by voice — say what happened and it's logged instantly with your phone's camera at the scoreboard clock to timestamp every event and stat to the real game clock automatically. Make up your own stats and notes on the fly geared towards your team's goals — "bad pass," "too high in the lane" — and they're tagged to the player and matchup. Underneath it all, the tactics engine runs on 36+ degrees of freedom per recommendation: years of matchup history, this game's live momentum, scouted notes on the exact defender you're facing, hot and cold streaks, foul trouble, shooting and sprint efficiency, lineup value comparisons, and rivalry-specific history, all cross-referenced to tell you who should be in the water, what play to run, and why — backed by real data instead of a gut call. And every player, coach, and manager gets their own page, so every stat, note, and play call lives in exactly one place.</p>
         <div class="hero-actions">
           <button class="primary-btn action-btn" onclick="navigate('teams')">Claim your team</button>
           <button class="ghost-btn action-btn" onclick="navigate('games')">Open a game</button>
@@ -452,7 +454,7 @@
         <h2>How it works</h2>
         <div class="steps-grid">
           <div class="step-card"><div class="step-num">1</div><strong>Claim your team</strong><p>Find your school on the schedule, claim it, and confirm you're really from that program.</p></div>
-          <div class="step-card"><div class="step-num">2</div><strong>Track every game live</strong><p>Manage mode gives you a voice-assisted box score tracker — goals, exclusions, steals, turnovers, all logged in real time. Say anything that's not a fixed stat — "bad pass," "too high in the lane" — and it's captured as a coach note instead.</p></div>
+          <div class="step-card"><div class="step-num">2</div><strong>Track every game live</strong><p>Manage mode gives you a voice-assisted box score tracker — goals, exclusions, steals, turnovers, all logged in real time and timestamped to the real game clock if you sync it via camera. Say anything that's not a fixed stat — "bad pass," "too high in the lane" — and it's captured as a coach note instead.</p></div>
           <div class="step-card"><div class="step-num">3</div><strong>Let the tactics engine work</strong><p>Every logged event feeds back in — matchup history, hot streaks, live in-game patterns, and recurring coach notes — surfaced right when you need a lineup call.</p></div>
         </div>
       </div>
@@ -461,11 +463,11 @@
         <h2>How the recommendation engine actually works</h2>
         <div class="data-row" style="align-items:flex-start;">
           <p style="max-width:640px;color:var(--text-dim);font-size:14px;line-height:1.7;margin:8px 0 0;">Every tactics call is built from three sources: this game's live event log, every historical box score on record for both teams (pulled from official results across multiple seasons), and the free-form notes a coach has logged on individual players. It's not a black-box score — open the tactics board and it shows you, in plain language, exactly which of the signals below drove each suggestion.</p>
-          <div class="pill" style="white-space:nowrap;">14+ signals per call</div>
+          <div class="pill" style="white-space:nowrap;">36+ signals per call</div>
         </div>
         <div class="signal-grid">
           <span class="signal-chip"><b>01</b>Man-up / man-down state</span>
-          <span class="signal-chip"><b>02</b>Score &amp; quarter context</span>
+          <span class="signal-chip"><b>02</b>Score &amp; quarter context, including crunch time</span>
           <span class="signal-chip"><b>03</b>Live momentum — runs, exclusions, turnovers</span>
           <span class="signal-chip"><b>04</b>Scouted notes on the defender you're facing</span>
           <span class="signal-chip"><b>05</b>Hot / cold streaks vs. season average</span>
@@ -474,6 +476,12 @@
           <span class="signal-chip"><b>08</b>How the opponent is scoring in this game, live</span>
           <span class="signal-chip"><b>09</b>Foul trouble &amp; fatigue flags</span>
           <span class="signal-chip"><b>10</b>Recurring coach notes — flagged once it repeats</span>
+          <span class="signal-chip"><b>11</b>Shooting &amp; sprint efficiency this season</span>
+          <span class="signal-chip"><b>12</b>Lineup value — bench vs. on-field, ranked</span>
+          <span class="signal-chip"><b>13</b>Full-game foul differential trend</span>
+          <span class="signal-chip"><b>14</b>Goalie-specific history, both ends of the pool</span>
+          <span class="signal-chip"><b>15</b>Rivalry-specific flags — blown leads, discipline</span>
+          <span class="signal-chip">+ 21 more, stacked and ranked live</span>
         </div>
       </div>
 
@@ -481,10 +489,12 @@
         <h2>What's inside</h2>
         <div class="feature-grid">
           <div class="feature-card"><div class="icon">🏊</div><strong>Team pages</strong><p>Roster, coaching staff, schedule, and cumulative stats for every team on the platform.</p></div>
+          <div class="feature-card"><div class="icon">🗂️</div><strong>Player, coach & manager pages</strong><p>Every player gets a career page — stats, notes, and matchup history. Coaches and managers get pre-game notes and the shared plays library. All the data, all in one place.</p></div>
           <div class="feature-card"><div class="icon">📋</div><strong>Live box score</strong><p>Manage a game in real time with manual or voice-assisted stat entry — goals, exclusions, steals, blocks, turnovers.</p></div>
+          <div class="feature-card"><div class="icon">📷</div><strong>Camera clock sync</strong><p>Point your phone at the scoreboard — 7-segment LED or a video board — and every event gets timestamped to the real game clock automatically, not just to whenever you happened to say it.</p></div>
           <div class="feature-card"><div class="icon">🎯</div><strong>Tactics board</strong><p>Drag caps onto the pool, request a recommendation, and get a lineup call backed by real matchup history — not a guess.</p></div>
           <div class="feature-card"><div class="icon">📊</div><strong>Matchup intelligence</strong><p>Every logged box score builds career stats per player, per opponent — who's beaten whom, and how often.</p></div>
-          <div class="feature-card"><div class="icon">🗣️</div><strong>Custom coach notes</strong><p>Voice tracking isn't limited to a fixed stat list — say or type anything ("bad pass," "too high in the lane") and it's tagged to the player, timestamped, and tracked alongside the box score.</p></div>
+          <div class="feature-card"><div class="icon">🗣️</div><strong>Create your own stats & notes</strong><p>Not limited to a fixed stat list — say or type anything ("bad pass," "too high in the lane") and it's tagged to the player, timestamped, and tracked alongside the box score, however you want to track your own game.</p></div>
           <div class="feature-card"><div class="icon">🚩</div><strong>Pattern flags</strong><p>Log the same note on a player twice and the tactics engine surfaces it as a recurring flag worth accounting for — no manual review needed.</p></div>
         </div>
       </div>
