@@ -1956,10 +1956,10 @@ const CURRENT_ROSTERS = {
   ], note:'Note: Soren Jensen and Griffen Price, who both appear in the 2023 rivalry history, are no longer on this roster — Jensen is now a Stanford assistant coach.' },
   "ucla": { label:"UCLA (2026)", players:[
     {cap:"1",name:"Harper Gardner",wpPosition:"GK"},
-    {cap:"26",name:"Joey Kent",wpPosition:"GK"},
-    {cap:"27",name:"Nate Tauscher",wpPosition:"GK"},
-    {cap:"28",name:"Nick Tovani",wpPosition:"GK"},
-    {cap:"29",name:"Griffen Price",wpPosition:"GK"},
+    {cap:"1B",name:"Joey Kent",wpPosition:"GK"},
+    {cap:"1C",name:"Nate Tauscher",wpPosition:"GK"},
+    {cap:"1D",name:"Nick Tovani",wpPosition:"GK"},
+    {cap:"1E",name:"Griffen Price",wpPosition:"GK"},
     {cap:"2",name:"Frederico Juc\u00e1 Carsalade",wpPosition:"A"},
     {cap:"3",name:"Jack Merrill",wpPosition:"D"},
     {cap:"4",name:"Marcell Sz\u00e9csi",wpPosition:"C"},
@@ -1984,12 +1984,12 @@ const CURRENT_ROSTERS = {
     {cap:"23",name:"Connor Colman",wpPosition:"A"},
     {cap:"24",name:"Vinnie Merk",wpPosition:"A"},
     {cap:"25",name:"Zac Miller",wpPosition:"A"},
-    {cap:"",name:"Santino Rossi",wpPosition:"D"}
+    {cap:"—",name:"Santino Rossi",wpPosition:"D"}
   ] },
   "usc": { label:"USC (2026)", players:[
     {cap:"1",name:"Luke Harris",wpPosition:"GK"},
-    {cap:"29",name:"Charles Mills",wpPosition:"GK"},
-    {cap:"30",name:"Nemo Pavoggi",wpPosition:"GK"},
+    {cap:"1B",name:"Charles Mills",wpPosition:"GK"},
+    {cap:"1C",name:"Nemo Pavoggi",wpPosition:"GK"},
     {cap:"2",name:"Gavin Conant",wpPosition:"DR"},
     {cap:"3",name:"Reed Hanna",wpPosition:"2MD"},
     {cap:"4",name:"Apostolos Georgaras",wpPosition:"DR"},
@@ -2079,8 +2079,8 @@ const CURRENT_ROSTERS = {
   ] },
   "pepperdine": { label:"Pepperdine (2026)", players:[
     {cap:"1",name:"Jaxon Leach",wpPosition:"GK"},
-    {cap:"17",name:"Max Smirnov",wpPosition:"GK"},
-    {cap:"18",name:"George Gayner",wpPosition:"GK"},
+    {cap:"1B",name:"Max Smirnov",wpPosition:"GK"},
+    {cap:"1C",name:"George Gayner",wpPosition:"GK"},
     {cap:"2",name:"Jon Carcarey",wpPosition:"UT"},
     {cap:"3",name:"Gabe Lewis",wpPosition:"UT"},
     {cap:"4",name:"Conor Brough",wpPosition:"A"},
@@ -2144,28 +2144,11 @@ const CURRENT_ROSTERS = {
     {cap:"19",name:"Domenico Barill\u00e0",wpPosition:"A"},
     {cap:"21",name:"Christian Renzuto",wpPosition:"C"}
   ] },
-  "west valley college": { label:"West Valley College (2026)", players:[
-    {cap:"1",name:"Lucas Rocha Gentil",wpPosition:"GK"},
-    {cap:"1A",name:"Nicholas Boniface",wpPosition:"GK"},
-    {cap:"2",name:"Nathan Arakawa",wpPosition:"A"},
-    {cap:"3",name:"Lucas Castro",wpPosition:"A"},
-    {cap:"4",name:"Vittorio Sarra",wpPosition:"A"},
-    {cap:"5",name:"Csanad Varga",wpPosition:"A"},
-    {cap:"6",name:"Pa'kalani Saxton Vaka",wpPosition:"UT"},
-    {cap:"7",name:"Yonatan Yoffenbratel Nadler",wpPosition:"C"},
-    {cap:"8",name:"Bronson Chungson",wpPosition:"A"},
-    {cap:"9",name:"Oliver Schnauer",wpPosition:"2MD"},
-    {cap:"10",name:"Tristan Grimett",wpPosition:"UT"},
-    {cap:"11",name:"Makar Salnikov",wpPosition:"A"},
-    {cap:"12",name:"Peter Kohari",wpPosition:"UT"},
-    {cap:"14",name:"Fionnian Beckham",wpPosition:"UT"},
-    {cap:"17",name:"Liam Rogers",wpPosition:"UT"},
-    {cap:"18",name:"Michael Rohlfing",wpPosition:"A"},
-    {cap:"19",name:"Cole Taylor",wpPosition:"C"},
-    {cap:"20",name:"Ali Cinar Nuray",wpPosition:"A"},
-    {cap:"21",name:"Jake Walton",wpPosition:"A"},
-    {cap:"23",name:"Jacob Rogers",wpPosition:"C"}
-  ] }
+  // West Valley College's athletics site (athletics.westvalley.edu) blocks automated access with a
+  // CAPTCHA — no roster could be verified from an official source, so this intentionally ships with
+  // an empty roster rather than guessed names. Add real players via the Teams page once available,
+  // or check the site directly (a human can pass the CAPTCHA where a script can't).
+  "west valley college": { label:"West Valley College (2026)", players:[] }
 };
 function bulkImportRoster(){
   const team = findTeam(app.selectedTeamId); if(!team) return;
@@ -2244,9 +2227,33 @@ function renderGames(){ const list = document.getElementById('gameList'); list.i
     const viewBtn=document.createElement('button'); viewBtn.className='ghost-btn'; viewBtn.textContent='Open viewer'; viewBtn.onclick=()=>navigate('game', game.id, {manage:false});
     const manageBtn=document.createElement('button'); manageBtn.className='primary-btn action-btn'; manageBtn.textContent='Manage'; manageBtn.onclick=()=>navigate('game', game.id, {manage:true});
     li.querySelector('.actions').appendChild(viewBtn); li.querySelector('.actions').appendChild(manageBtn);
+    if(hasManagePermission(game)){
+      const delBtn=document.createElement('button'); delBtn.className='ghost-btn'; delBtn.style.color='var(--bad)'; delBtn.textContent='Delete';
+      delBtn.onclick=()=>deleteGame(game.id);
+      li.querySelector('.actions').appendChild(delBtn);
+    }
     ul.appendChild(li);
   });
   list.appendChild(ul);
+}
+// A schedule mistake (wrong opponent typed, duplicate entry, a tournament game that got cancelled)
+// needs a real way to remove it — this pulls fresh first, same as the clock-sync race-safety
+// pattern, so deleting on one device can't silently resurrect a game another device just edited,
+// and confirms clearly since every logged event for that game goes with it, permanently.
+async function deleteGame(gameId){
+  const game = findGame(gameId); if(!game) return;
+  const team = findTeam(game.teamId);
+  const eventCount = getGameEvents(game).length;
+  const warning = eventCount>0
+    ? `Delete ${team?team.name:'this team'} vs ${game.opponent}? This game has ${eventCount} logged event(s) — deleting it erases that entire game log permanently. This cannot be undone.`
+    : `Delete ${team?team.name:'this team'} vs ${game.opponent}? This cannot be undone.`;
+  if(!confirm(warning)) return;
+  await pullSharedStateFromServer(false);
+  if(!findGame(gameId)) { renderGames(); return; } // already gone (deleted elsewhere, or never existed after the pull)
+  app.games = app.games.filter(g=>g.id!==gameId);
+  const t = findTeam(game.teamId); if(t) t.games = (t.games||[]).filter(id=>id!==gameId);
+  saveState();
+  renderGames();
 }
 
 function toggleManageMode(){ app.manageMode = !app.manageMode; renderGame(); }
