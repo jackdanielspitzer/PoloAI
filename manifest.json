@@ -1,6 +1,6 @@
 {
-  "name": "PoloAI — Team Launch & Live Tracker",
-  "short_name": "PoloAI",
+  "name": "Polo IQ — Team Launch & Live Tracker",
+  "short_name": "Polo IQ",
   "description": "Live team hub and coaching brain for water polo — rosters, schedules, real-time box score tracking, and a tactics engine backed by real matchup history.",
   "start_url": "./",
   "scope": "./",
