@@ -659,10 +659,6 @@
 
           <div>
             <div class="panel">
-              <h2>Team summary</h2>
-              <div id="teamSummary" class="stats-grid"></div>
-            </div>
-            <div class="panel">
               <h2>Upcoming games</h2>
               <ul id="teamGamesList" class="minimal-list"></ul>
             </div>
@@ -1694,7 +1690,6 @@ function renderTeam(){ const team = findTeam(app.selectedTeamId); if(!team){ nav
     const u = currentUser(); if(u && ( (u.role==='manager' && u.teamId===team.id) || (u.role==='coach' && u.teamId===team.id) )){ li.querySelector('.actions').appendChild(viewBtn); li.querySelector('.actions').appendChild(toggleActiveBtn); li.querySelector('.actions').appendChild(removeBtn); } else { li.querySelector('.actions').appendChild(viewBtn); }
     document.getElementById('teamRosterList').appendChild(li);
   });
-  document.getElementById('teamSummary').innerHTML = renderTeamSummary(team);
   const teamGames = app.games.filter(g=>g.teamId===team.id).sort((a,b)=> (a.date||'') > (b.date||'') ? 1 : -1);
   const teamGamesList = document.getElementById('teamGamesList'); teamGamesList.innerHTML='';
   if(teamGames.length===0){ teamGamesList.innerHTML='<li class="item" style="color:var(--text-faint);">No games scheduled for this team.</li>'; }
@@ -1706,27 +1701,6 @@ function renderTeam(){ const team = findTeam(app.selectedTeamId); if(!team){ nav
     li.querySelector('.actions').appendChild(viewBtn); li.querySelector('.actions').appendChild(manageBtn);
     teamGamesList.appendChild(li);
   });
-}
-
-function renderTeamSummary(team){ const games = app.games.filter(g=>g.teamId===team.id); const totals = games.flatMap(g=>getGameEvents(g)).filter(e=>e.stat_type!=='unmatched');
-  const counts = STAT_DEFS.map(def=>totals.filter(e=>e.stat_type===def.key).length);
-  const goals = counts[0] || 0; const attempts = counts[1] || 0;
-  // Sh% only from games that actually tracked shot attempts (goal-only historical imports never
-  // did — see buildPlayerSeasonStats), otherwise a handful of real attempts from live-tracked games
-  // gets divided into hundreds of imported goals and produces a percentage like 6500%.
-  let shGoals=0, shAttempts=0;
-  games.forEach(g=>{
-    const evs = getGameEvents(g).filter(e=>e.stat_type!=='unmatched');
-    const gAttempts = evs.filter(e=>e.stat_type==='shot_attempt').length;
-    if(gAttempts>0){ shGoals += evs.filter(e=>e.stat_type==='goal').length; shAttempts += gAttempts; }
-  });
-  const shPct = shAttempts ? Math.round(shGoals/shAttempts*100) + '%' : '—';
-  return `
-    <div class="stat-card"><h3>Total games</h3><div class="value">${games.length}</div></div>
-    <div class="stat-card"><h3>Goals</h3><div class="value">${goals}</div></div>
-    <div class="stat-card"><h3>Shots</h3><div class="value">${attempts}</div></div>
-    <div class="stat-card"><h3>SH%</h3><div class="value">${shPct}</div></div>
-  `;
 }
 
 // Real school colors + mascot, keyed the same way as CURRENT_ROSTERS/HISTORICAL_MATCHUPS (lowercase substring
