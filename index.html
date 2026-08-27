@@ -1981,6 +1981,30 @@ const SEED_CAL_PLAYBYPLAY = {
   "2025-11-22|UCLA": [[1,59000,"team","Tomas Perrone","Goal",[1,0]],[1,335000,"team","Beso Akhvlediani","Goal",[2,0]],[1,390000,"team","Albert Ponferrada","Goal",[3,0]],[2,114000,"opponent","Gray Carson","Goal (man-up)",[3,1]],[2,243000,"opponent","Bode Brinkema","Goal",[3,2]],[2,309000,"opponent","Marcell Szecsi","Goal (man-up)",[3,3]],[2,340000,"opponent","Marcell Szecsi","Goal",[3,4]],[2,371000,"team","Beso Akhvlediani","Goal (man-up)",[4,4]],[3,60000,"opponent","Peter Castillo","Goal",[4,5]],[3,94000,"team","Bende Pardi","Goal (penalty shot)",[5,5]],[3,104000,"opponent","Bode Brinkema","Goal",[5,6]],[3,129000,"team","Bende Pardi","Goal (penalty shot)",[6,6]],[3,148000,"opponent","Frederico Juca Carsalade","Goal",[6,7]],[3,225000,"team","Tomas Perrone","Goal",[7,7]],[3,313000,"opponent","Peter Castillo","Goal (man-up)",[7,8]],[3,409000,"team","Beso Akhvlediani","Goal",[8,8]],[3,434000,"opponent","Chase Dodd","Goal",[8,9]],[4,131000,"opponent","Ryder Dodd","Goal",[8,10]],[4,402000,"opponent","Frederico Juca Carsalade","Goal",[8,11]],[4,416000,"team","Bende Pardi","Goal",[9,11]]],
   "2025-11-23|Stanford": [[1,29000,"team","Maddox Arlett","Goal",[1,0]],[1,170000,"team","Beso Akhvlediani","Goal",[2,0]],[1,344000,"opponent","Botond Balogh","Goal",[2,1]],[1,392000,"opponent","Botond Balogh","Goal (penalty shot)",[2,2]],[1,432000,"team","Beso Akhvlediani","Goal (man-up)",[3,2]],[1,478000,"team","Ryder Hagan","Goal",[4,2]],[2,55000,"team","Albert Ponferrada","Goal (man-up)",[5,2]],[2,80000,"opponent","Botond Balogh","Goal",[5,3]],[2,107000,"team","Albert Ponferrada","Goal",[6,3]],[2,140000,"team","Beso Akhvlediani","Goal",[7,3]],[2,246000,"opponent","Botond Balogh","Goal (man-up)",[7,4]],[2,281000,"opponent","Ben Forer","Goal",[7,5]],[2,365000,"team","Tomas Perrone","Goal (man-up)",[8,5]],[2,392000,"opponent","Botond Balogh","Goal",[8,6]],[3,53000,"team","Albert Ponferrada","Goal",[9,6]],[3,119000,"team","Tomas Perrone","Goal (man-up)",[10,6]],[3,134000,"opponent","Ben Forer","Goal",[10,7]],[3,194000,"opponent","Botond Balogh","Goal",[10,8]],[3,234000,"opponent","Gianpiero Di Martire","Goal (man-up)",[10,9]],[3,290000,"opponent","Alex Gheorghe","Goal",[10,10]],[3,407000,"opponent","Chase McFarland","Goal",[10,11]],[4,96000,"opponent","Daniel Mnatsakanian","Goal",[10,12]],[4,146000,"team","Beso Akhvlediani","Goal (man-up)",[11,12]],[4,209000,"opponent","Botond Balogh","Goal",[11,13]],[4,248000,"opponent","Ben Forer","Goal",[11,14]],[4,288000,"team","Beso Akhvlediani","Goal (man-up)",[12,14]],[4,459000,"opponent","Chase McFarland","Goal",[12,15]]],
 };
+// For a game where no real play-by-play was ever sourced — only a final score — this spreads that
+// score across all 4 quarters (proportionally, by count) instead of dumping every goal into the first
+// few seconds of Q1 the way a flat i*1000ms loop used to. Team and opponent goals are interleaved by
+// their assigned time within each quarter so the running score still climbs a plausible way. Still
+// unambiguously a reconstruction, not a record — raw_phrase keeps saying so, and there's no scorer name
+// or real clock time to give, just a believable quarter and running score.
+function buildPlaceholderQuarterEvents(teamScore, oppScore){
+  const PERIOD_MS = 8*60*1000;
+  const splitAcrossQuarters = (total) => { const base=Math.floor(total/4), rem=total%4; return [0,1,2,3].map(i=>base+(i<rem?1:0)); };
+  const teamByQ = splitAcrossQuarters(teamScore), oppByQ = splitAcrossQuarters(oppScore);
+  const out = []; let teamCt=0, oppCt=0;
+  [1,2,3,4].forEach((q,i)=>{
+    const tQ = teamByQ[i], oQ = oppByQ[i];
+    const slots = [];
+    for(let k=0;k<tQ;k++) slots.push({side:'team', ms: Math.round((k+0.5)*PERIOD_MS/tQ)});
+    for(let k=0;k<oQ;k++) slots.push({side:'opponent', ms: Math.round((k+0.5)*PERIOD_MS/oQ)});
+    slots.sort((a,b)=>a.ms-b.ms);
+    slots.forEach(({side, ms})=>{
+      if(side==='team') teamCt++; else oppCt++;
+      out.push({ q, event: { playerId:null, playerCap:null, stat_type:'goal', side, wall_time_offset_ms:ms, raw_phrase:'(imported result)', scoreAfter:[teamCt,oppCt], vsCap:'1' } });
+    });
+  });
+  return out;
+}
 // Backfills the last two completed seasons as real, final games — same shape as any other logged
 // game (status, quarters, events). When SEED_CAL_PLAYBYPLAY has a real, score-matching record for a
 // game, real events (scorer, quarter, clock, man-up/penalty tagging, running score) are used,
@@ -2010,12 +2034,11 @@ function ensurePastSeasonResults(){
           stat_type:'goal', side, wall_time_offset_ms: ms,
           raw_phrase: (side==='team' ? `${label} — ${name}` : `${label} — ${name} (opponent)`) + ` (${scoreAfter[0]}-${scoreAfter[1]})`,
           manState: /man-up/.test(label) ? (side==='team' ? 'team_up' : 'opp_up') : null,
-          scoreAfter,
+          scoreAfter, vsCap: '1',
         });
       });
     } else {
-      for(let i=0;i<s.teamScore;i++) game.quarters[1].push({playerId:null, playerCap:null, stat_type:'goal', side:'team', wall_time_offset_ms:i*1000, raw_phrase:'(imported result)'});
-      for(let i=0;i<s.oppScore;i++) game.quarters[1].push({playerId:null, playerCap:null, stat_type:'goal', side:'opponent', wall_time_offset_ms:i*1000, raw_phrase:'(imported result)'});
+      buildPlaceholderQuarterEvents(s.teamScore, s.oppScore).forEach(ev=>game.quarters[ev.q].push(ev.event));
     }
     addOpponent(s.opponent, false);
     app.games.push(game);
@@ -2875,12 +2898,11 @@ function ensureOpponentSchoolResults(){
             stat_type:'goal', side, wall_time_offset_ms: ms,
             raw_phrase: (side==='team' ? `${label} — ${name}` : `${label} — ${name} (opponent)`) + ` (${scoreAfter[0]}-${scoreAfter[1]})`,
             manState: /man-up/.test(label) ? (side==='team' ? 'team_up' : 'opp_up') : null,
-            scoreAfter,
+            scoreAfter, vsCap: '1',
           });
         });
       } else {
-        for(let i=0;i<s.teamScore;i++) game.quarters[1].push({playerId:null, playerCap:null, stat_type:'goal', side:'team', wall_time_offset_ms:i*1000, raw_phrase:'(imported result)'});
-        for(let i=0;i<s.oppScore;i++) game.quarters[1].push({playerId:null, playerCap:null, stat_type:'goal', side:'opponent', wall_time_offset_ms:i*1000, raw_phrase:'(imported result)'});
+        buildPlaceholderQuarterEvents(s.teamScore, s.oppScore).forEach(ev=>game.quarters[ev.q].push(ev.event));
       }
       addOpponent(s.opponent, false);
       app.games.push(game);
@@ -3589,10 +3611,17 @@ function buildPlayerSeasonStats(player){
     if(events.length===0) return;
     const year = (game.date||'').slice(0,4) || 'Unknown';
     const s = ensureYear(year);
-    s.gpSet.add(game.id); s.hasShotData = true;
+    s.gpSet.add(game.id);
+    // Real box-score imports (SEED_CAL_PLAYBYPLAY / SEED_SCHOOL_PLAYBYPLAY) only ever carry goal
+    // events, never shot attempts — 6-8sports and school box scores don't track a per-player miss
+    // count. Only flip hasShotData for a game that actually logged a shot_attempt for this player
+    // (i.e. a live-tracked game), same rule HISTORICAL_MATCHUPS already follows below — otherwise a
+    // season stitched from goal-only imports would show a >100% shooting percentage.
+    const shotCount = events.filter(ev=>ev.stat_type==='shot_attempt').length;
+    if(shotCount>0) s.hasShotData = true;
     STAT_DEFS.forEach(def=>{
       const count = events.filter(ev=>ev.stat_type===def.key).length; if(!count) return;
-      if(def.key==='goal'){ s.g += count; s.gWithShotData += count; }
+      if(def.key==='goal'){ s.g += count; if(shotCount>0) s.gWithShotData += count; }
       else if(def.key==='assist') s.a += count;
       else if(def.key==='shot_attempt') s.sh += count;
       else if(def.key==='exclusion_drawn') s.exd += count;
