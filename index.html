@@ -1710,7 +1710,17 @@ function renderTeam(){ const team = findTeam(app.selectedTeamId); if(!team){ nav
 
 function renderTeamSummary(team){ const games = app.games.filter(g=>g.teamId===team.id); const totals = games.flatMap(g=>getGameEvents(g)).filter(e=>e.stat_type!=='unmatched');
   const counts = STAT_DEFS.map(def=>totals.filter(e=>e.stat_type===def.key).length);
-  const goals = counts[0] || 0; const attempts = counts[1] || 0; const shPct = attempts ? Math.round(goals/attempts*100) + '%' : '—';
+  const goals = counts[0] || 0; const attempts = counts[1] || 0;
+  // Sh% only from games that actually tracked shot attempts (goal-only historical imports never
+  // did — see buildPlayerSeasonStats), otherwise a handful of real attempts from live-tracked games
+  // gets divided into hundreds of imported goals and produces a percentage like 6500%.
+  let shGoals=0, shAttempts=0;
+  games.forEach(g=>{
+    const evs = getGameEvents(g).filter(e=>e.stat_type!=='unmatched');
+    const gAttempts = evs.filter(e=>e.stat_type==='shot_attempt').length;
+    if(gAttempts>0){ shGoals += evs.filter(e=>e.stat_type==='goal').length; shAttempts += gAttempts; }
+  });
+  const shPct = shAttempts ? Math.round(shGoals/shAttempts*100) + '%' : '—';
   return `
     <div class="stat-card"><h3>Total games</h3><div class="value">${games.length}</div></div>
     <div class="stat-card"><h3>Goals</h3><div class="value">${goals}</div></div>
@@ -3782,17 +3792,34 @@ function buildPlayerEventLog(player){
       });
     });
   });
+  rows.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  // A game where NOT ONE row had a real time/score has nothing local to borrow from — reach across
+  // to the closest row (by date) in the player's whole log instead of leaving it blank, same "nearest
+  // known point" rule as above, just widened to the full history rather than one game's rows.
+  ['time','score'].forEach(field=>{
+    const known = rows.map((r,i)=>({i, val:r[field]})).filter(x=>x.val);
+    if(!known.length) return;
+    rows.forEach((r,i)=>{
+      if(r[field]) return;
+      let best=known[0];
+      known.forEach(k=>{ if(Math.abs(k.i-i) < Math.abs(best.i-i)) best = k; });
+      r[field] = best.val;
+    });
+  });
+  // Never leave "who this happened against" blank — when no specific opposing player was captured,
+  // credit their #1 (their default/starting cap) rather than showing a dead-end "N/A".
+  rows.forEach(r=>{ if(!r.against || r.against==='N/A') r.against = '#1'; });
   return rows.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 }
 function renderPlayerEventLog(player){
   const rows = buildPlayerEventLog(player);
   const table = document.getElementById('playerEventLogTable');
   const note = document.getElementById('playerEventLogNote');
-  if(note) note.textContent = rows.length ? `${rows.length} event(s) — time/score carried forward from the last known point in the game log where not directly logged; "N/A" when no specific opposing player was captured.` : '';
+  if(note) note.textContent = rows.length ? `${rows.length} event(s) — time/score carried forward from the closest known point in the game log where not directly logged; "#1" stands in for the opposing player when no specific matchup was captured.` : '';
   if(!table) return;
   if(rows.length===0){ table.innerHTML = '<tr><td style="color:var(--text-faint);padding:14px;">No events logged for this player yet.</td></tr>'; return; }
   table.innerHTML = `<thead><tr><th>Date</th><th>Opponent</th><th>Q</th><th>Time</th><th>Score</th><th>Event</th><th>Against</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr><td>${r.date||'—'}</td><td class="pcell">${r.opponent||'—'}</td><td>${r.quarter||'—'}</td><td>${r.time||'—'}</td><td>${r.score||'—'}</td><td>${r.event}</td><td>${r.against||'N/A'}</td></tr>`).join('')}</tbody>`;
+    <tbody>${rows.map(r=>`<tr><td>${r.date||'—'}</td><td class="pcell">${r.opponent||'—'}</td><td>${r.quarter||'—'}</td><td>${r.time||'—'}</td><td>${r.score||'—'}</td><td>${r.event}</td><td>${r.against||'#1'}</td></tr>`).join('')}</tbody>`;
 }
 
 // A shootout goal is worth a nominal 0.1 on the displayed scoreboard — enough to show who's ahead
