@@ -659,8 +659,9 @@
 
           <div>
             <div class="panel">
-              <h2>Upcoming games</h2>
-              <ul id="teamGamesList" class="minimal-list"></ul>
+              <h2>2026 games</h2>
+              <div class="stats-grid"><div class="stat-card"><h3>Total games</h3><div class="value" id="teamGamesCount">0</div></div></div>
+              <ul id="teamGamesList" class="minimal-list" style="margin-top:14px;"></ul>
             </div>
           </div>
         </div>
@@ -1264,6 +1265,7 @@ function loadState(){ try{ const raw = localStorage.getItem('poloai-app-state');
   ensureSeedTeamsAndSchedule();
   ensurePastSeasonResults();
   ensureOpponentSchoolResults();
+  ensureSchoolSeed2026Schedule();
   // applyBrandingIfKnown only ever ran once, at team creation — a team made before its school was
   // added to TEAM_BRANDING (or before this feature existed at all) was frozen on the generic
   // default colors forever. Re-running it here is a no-op for any team with real custom colors
@@ -1690,9 +1692,13 @@ function renderTeam(){ const team = findTeam(app.selectedTeamId); if(!team){ nav
     const u = currentUser(); if(u && ( (u.role==='manager' && u.teamId===team.id) || (u.role==='coach' && u.teamId===team.id) )){ li.querySelector('.actions').appendChild(viewBtn); li.querySelector('.actions').appendChild(toggleActiveBtn); li.querySelector('.actions').appendChild(removeBtn); } else { li.querySelector('.actions').appendChild(viewBtn); }
     document.getElementById('teamRosterList').appendChild(li);
   });
-  const teamGames = app.games.filter(g=>g.teamId===team.id).sort((a,b)=> (a.date||'') > (b.date||'') ? 1 : -1);
+  // The team page is about this season, not the two years of historical results backfilled for
+  // scouting/tactics purposes — those still live on the Games page and feed the stats engine, but
+  // here they'd just bury the 2026 schedule under hundreds of old games.
+  const teamGames = app.games.filter(g=>g.teamId===team.id && (g.date||'').startsWith('2026')).sort((a,b)=> (a.date||'') > (b.date||'') ? 1 : -1);
+  const teamGamesCount = document.getElementById('teamGamesCount'); if(teamGamesCount) teamGamesCount.textContent = teamGames.length;
   const teamGamesList = document.getElementById('teamGamesList'); teamGamesList.innerHTML='';
-  if(teamGames.length===0){ teamGamesList.innerHTML='<li class="item" style="color:var(--text-faint);">No games scheduled for this team.</li>'; }
+  if(teamGames.length===0){ teamGamesList.innerHTML='<li class="item" style="color:var(--text-faint);">No 2026 games scheduled for this team yet.</li>'; }
   teamGames.forEach(game=>{
     const li=document.createElement('li'); li.className='item';
     li.innerHTML = `<strong>${game.date || 'TBD'} vs ${game.opponent || 'Opp'} </strong><div class="entity-meta"><span>${game.time || ''}</span><span>${game.location || ''}</span><span>${gameDisplayStatus(game)}</span></div><div class="actions"></div>`;
@@ -2500,6 +2506,244 @@ const SEED_SCHOOL_RESULTS = {
     {date:'2025-12-06', opponent:'UCLA', teamScore:7, oppScore:9},
   ],
 };
+
+// Each opponent school's OWN real 2026 schedule (their full season, not just games vs Cal) — same
+// direct-from-the-school's-own-athletics-site sourcing as SEED_SCHOOL_RESULTS, fetched fresh for the
+// season that's actually about to happen. Filed under that school's own team so their team page (which
+// only shows 2026 games) has something real to display, the same way Cal's does via SEED_2026_SCHEDULE.
+const SEED_SCHOOL_2026_SCHEDULE = {
+  'UCLA': [
+    {date:'2026-08-28', opponent:'California', site:'Triton Invitational (exhibition) — Coronado, CA'},
+    {date:'2026-08-29', opponent:"Saint Mary's", site:'Triton Invitational — La Jolla, CA'},
+    {date:'2026-08-29', opponent:'Bucknell', site:'Triton Invitational — La Jolla, CA'},
+    {date:'2026-09-04', opponent:'Pacific', site:'Aggie Roundup — @ Stockton, CA'},
+    {date:'2026-09-05', opponent:'UC Davis', site:'Aggie Roundup — @ Davis, CA'},
+    {date:'2026-09-05', opponent:'Santa Clara', site:'Aggie Roundup — Davis, CA'},
+    {date:'2026-09-11', opponent:'UC Irvine', site:'@ Irvine, CA'},
+    {date:'2026-09-12', opponent:'UC Santa Barbara', site:'UCLA Mini Invite — Los Angeles, CA'},
+    {date:'2026-09-12', opponent:'LMU', site:'UCLA Mini Invite — Los Angeles, CA'},
+    {date:'2026-09-18', opponent:'MPSF Invitational (field TBD)', site:'@ Stanford, CA'},
+    {date:'2026-09-19', opponent:'MPSF Invitational (field TBD)', site:'@ Stanford, CA'},
+    {date:'2026-09-20', opponent:'MPSF Invitational (field TBD)', site:'@ Stanford, CA'},
+    {date:'2026-09-25', opponent:'Fordham', site:'vs Fordham (Los Angeles)'},
+    {date:'2026-09-26', opponent:'Pepperdine', site:'@ Malibu, CA'},
+    {date:'2026-10-03', opponent:'Stanford', site:'vs Stanford (Los Angeles)'},
+    {date:'2026-10-04', opponent:'California', site:'vs California (Los Angeles)'},
+    {date:'2026-10-10', opponent:'Golden West College', site:'vs Golden West (Los Angeles)'},
+    {date:'2026-10-10', opponent:'California Baptist', site:'vs Cal Baptist (Los Angeles)'},
+    {date:'2026-10-17', opponent:'USC', site:'@ USC'},
+    {date:'2026-10-31', opponent:'California', site:'@ Berkeley, CA'},
+    {date:'2026-11-01', opponent:'Stanford', site:'@ Stanford, CA'},
+    {date:'2026-11-07', opponent:'UC San Diego', site:'vs UC San Diego (Los Angeles)'},
+    {date:'2026-11-14', opponent:'USC', site:'vs USC (Los Angeles)'},
+    {date:'2026-11-20', opponent:'MPSF Championship (field TBD)', site:'Los Angeles, CA'},
+    {date:'2026-12-04', opponent:'NCAA Championship (field TBD)', site:'La Jolla, CA'},
+  ],
+  'USC': [
+    {date:'2026-08-28', opponent:"Saint Mary's", site:'Triton Invitational — La Jolla, CA'},
+    {date:'2026-08-29', opponent:'McKendree', site:'Triton Invitational — La Jolla, CA'},
+    {date:'2026-08-29', opponent:'Claremont-Mudd-Scripps', site:'Triton Invitational — La Jolla, CA'},
+    {date:'2026-08-30', opponent:'UC Santa Barbara', site:'Triton Invitational — La Jolla, CA'},
+    {date:'2026-09-04', opponent:'Long Beach State', site:'@ Long Beach, CA'},
+    {date:'2026-09-06', opponent:'Pepperdine', site:'vs Pepperdine (Los Angeles)'},
+    {date:'2026-09-06', opponent:'Golden West', site:'vs Golden West (Los Angeles)'},
+    {date:'2026-09-12', opponent:'UC Irvine', site:'vs UC Irvine (Los Angeles)'},
+    {date:'2026-09-18', opponent:'MPSF Invitational (field TBD)', site:'@ Stanford, CA'},
+    {date:'2026-09-19', opponent:'MPSF Invitational (field TBD)', site:'@ Stanford, CA'},
+    {date:'2026-09-20', opponent:'MPSF Invitational (field TBD)', site:'@ Stanford, CA'},
+    {date:'2026-09-27', opponent:'Pacific', site:'vs Pacific (Los Angeles)'},
+    {date:'2026-10-03', opponent:'California', site:'vs California (Los Angeles)'},
+    {date:'2026-10-04', opponent:'Stanford', site:'vs Stanford (Los Angeles)'},
+    {date:'2026-10-10', opponent:'UC San Diego', site:'vs UC San Diego (Los Angeles)'},
+    {date:'2026-10-17', opponent:'UCLA', site:'vs UCLA (Los Angeles)'},
+    {date:'2026-10-24', opponent:'Air Force', site:'vs Air Force (Los Angeles)'},
+    {date:'2026-10-31', opponent:'Stanford', site:'@ Stanford, CA'},
+    {date:'2026-11-01', opponent:'California', site:'@ Berkeley, CA'},
+    {date:'2026-11-07', opponent:'UC Santa Barbara', site:'@ Santa Barbara, CA'},
+    {date:'2026-11-14', opponent:'UCLA', site:'@ Los Angeles, CA'},
+    {date:'2026-11-20', opponent:'MPSF Championship (field TBD)', site:'Los Angeles, CA'},
+    {date:'2026-12-04', opponent:'NCAA Championship (field TBD)', site:'La Jolla, CA'},
+  ],
+  'Stanford': [
+    {date:'2026-08-29', opponent:'UC Irvine', site:'@ Irvine, CA'},
+    {date:'2026-08-29', opponent:'Cal St. Fullerton', site:'@ Irvine, CA (neutral)'},
+    {date:'2026-09-05', opponent:'Pepperdine', site:'@ Malibu, CA'},
+    {date:'2026-09-06', opponent:'UC Santa Barbara', site:'@ Santa Barbara, CA'},
+    {date:'2026-09-13', opponent:'Pacific', site:'@ Stockton, CA'},
+    {date:'2026-09-18', opponent:'MPSF Invitational (field TBD)', site:'vs MPSF Invitational (Stanford)'},
+    {date:'2026-09-25', opponent:'San José State', site:'vs San José St. (Stanford)'},
+    {date:'2026-09-27', opponent:'UC Davis', site:'@ Davis, CA'},
+    {date:'2026-10-03', opponent:'UCLA', site:'@ Los Angeles, CA'},
+    {date:'2026-10-04', opponent:'USC', site:'@ Los Angeles, CA'},
+    {date:'2026-10-10', opponent:'Santa Clara', site:'vs Santa Clara (Stanford)'},
+    {date:'2026-10-17', opponent:'California', site:'@ Berkeley, CA'},
+    {date:'2026-10-23', opponent:'Long Beach St.', site:'@ Long Beach, CA'},
+    {date:'2026-10-25', opponent:'UC San Diego', site:'@ La Jolla, CA'},
+    {date:'2026-10-31', opponent:'USC', site:'vs USC (Stanford)'},
+    {date:'2026-11-01', opponent:'UCLA', site:'vs UCLA (Stanford)'},
+    {date:'2026-11-08', opponent:'Fordham', site:'vs Fordham (Stanford)'},
+    {date:'2026-11-13', opponent:'California', site:'Big Splash — vs California (Stanford)'},
+    {date:'2026-11-20', opponent:'MPSF Championship (field TBD)', site:'Los Angeles, CA'},
+    {date:'2026-12-04', opponent:'NCAA Championship (field TBD)', site:'La Jolla, CA'},
+  ],
+  'Pepperdine': [
+    {date:'2026-08-29', opponent:'McKendree', site:'Triton Invite — San Diego, CA'},
+    {date:'2026-08-29', opponent:'Claremont-Mudd-Scripps', site:'Triton Invite — San Diego, CA'},
+    {date:'2026-08-30', opponent:'Long Beach State', site:'Triton Invite — San Diego, CA'},
+    {date:'2026-08-30', opponent:'UC San Diego', site:'Triton Invite — @ San Diego, CA'},
+    {date:'2026-09-03', opponent:'Biola', site:'vs Biola (Malibu)'},
+    {date:'2026-09-03', opponent:'UC Santa Barbara', site:'Dinner on the Deck — vs UCSB (Malibu)'},
+    {date:'2026-09-05', opponent:'Stanford', site:'Polo in Paradise — vs Stanford (Malibu)'},
+    {date:'2026-09-06', opponent:'USC', site:'@ Los Angeles, CA'},
+    {date:'2026-09-11', opponent:'Fordham', site:'@ Bronx, NY'},
+    {date:'2026-09-13', opponent:'Princeton', site:'@ Princeton, NJ'},
+    {date:'2026-09-18', opponent:'MPSF Invite (field TBD)', site:'@ Palo Alto, CA'},
+    {date:'2026-09-26', opponent:'UCLA', site:"Jr. Waves Day — vs UCLA (Malibu)"},
+    {date:'2026-10-02', opponent:'LMU', site:'vs LMU (Malibu)'},
+    {date:'2026-10-10', opponent:'Air Force', site:'@ USAF Academy, CO'},
+    {date:'2026-10-17', opponent:'Santa Clara', site:'Grow The Game/Alumni Game — vs Santa Clara (Malibu)'},
+    {date:'2026-10-18', opponent:'San Jose State', site:'vs San Jose State (Malibu)'},
+    {date:'2026-10-23', opponent:'California', site:'@ Berkeley, CA'},
+    {date:'2026-10-24', opponent:'Harvard', site:'Julian Fraser Memorial — Santa Clara, CA'},
+    {date:'2026-10-24', opponent:'Brown', site:'Julian Fraser Memorial — Santa Clara, CA'},
+    {date:'2026-10-30', opponent:'UC Davis', site:'vs UC Davis (Malibu)'},
+    {date:'2026-11-06', opponent:"Saint Mary's", site:"@ Moraga, CA"},
+    {date:'2026-11-08', opponent:'Pacific', site:'@ Stockton, CA'},
+    {date:'2026-11-14', opponent:'Long Beach State', site:'Orange Out/Senior Day — vs Long Beach State (Malibu)'},
+    {date:'2026-11-20', opponent:'WCC Championships (field TBD)', site:'Santa Clara, CA'},
+  ],
+  'UC Davis': [
+    {date:'2026-08-28', opponent:'Wagner', site:'Bruno Classic — @ Providence, RI'},
+    {date:'2026-08-29', opponent:'Iona', site:'Bruno Classic — @ Providence, RI'},
+    {date:'2026-08-29', opponent:'Brown', site:'Bruno Classic — @ Providence, RI'},
+    {date:'2026-08-30', opponent:'Fordham', site:'Bruno Classic — @ Providence, RI'},
+    {date:'2026-09-05', opponent:'UCLA', site:'Aggie Roundup — Davis, CA'},
+    {date:'2026-09-05', opponent:'Cuesta College', site:'Aggie Roundup — Davis, CA'},
+    {date:'2026-09-06', opponent:'Harvard', site:'Aggie Roundup — Davis, CA'},
+    {date:'2026-09-06', opponent:'UC Merced', site:'Aggie Roundup — Davis, CA'},
+    {date:'2026-09-06', opponent:'American River College', site:'Aggie Roundup — Davis, CA'},
+    {date:'2026-09-13', opponent:'California', site:'vs California (Davis)'},
+    {date:'2026-09-18', opponent:'MPSF Invite (field TBD)', site:'@ Stanford, CA'},
+    {date:'2026-09-27', opponent:'Stanford', site:'vs Stanford (Davis)'},
+    {date:'2026-10-09', opponent:'Santa Clara', site:'@ Santa Clara, CA'},
+    {date:'2026-10-11', opponent:'San Jose State', site:'@ San Jose, CA'},
+    {date:'2026-10-16', opponent:'Pacific', site:"Faculty/Staff Appreciation — vs Pacific (Davis)"},
+    {date:'2026-10-18', opponent:'Air Force', site:'vs Air Force (Davis)'},
+    {date:'2026-10-24', opponent:'UC Merced', site:'Julian Fraser Memorial — Santa Clara, CA'},
+    {date:'2026-10-24', opponent:'Harvard', site:'Julian Fraser Memorial — San Jose, CA'},
+    {date:'2026-10-25', opponent:'Princeton', site:'Julian Fraser Memorial — San Jose, CA'},
+    {date:'2026-10-30', opponent:'Pepperdine', site:'@ Malibu, CA'},
+    {date:'2026-11-01', opponent:"Saint Mary's", site:"vs Saint Mary's (Davis)"},
+    {date:'2026-11-08', opponent:'LMU', site:'Senior Day — vs LMU (Davis)'},
+    {date:'2026-11-20', opponent:'WCC Championships (field TBD)', site:'Santa Clara, CA'},
+  ],
+  'Pacific': [
+    {date:'2026-08-28', opponent:'Brown', site:'@ Providence, RI (exhibition)'},
+    {date:'2026-08-29', opponent:'Fordham', site:'@ Providence, RI'},
+    {date:'2026-08-29', opponent:'Iona', site:'@ Providence, RI'},
+    {date:'2026-08-30', opponent:'Harvard', site:'@ Cambridge, MA'},
+    {date:'2026-08-30', opponent:'MIT', site:'@ Cambridge, MA'},
+    {date:'2026-09-04', opponent:'UCLA', site:'vs UCLA (Stockton)'},
+    {date:'2026-09-11', opponent:'California', site:'@ Berkeley, CA'},
+    {date:'2026-09-13', opponent:'Stanford', site:'vs Stanford (Stockton)'},
+    {date:'2026-09-25', opponent:'Long Beach State', site:'@ Long Beach, CA'},
+    {date:'2026-09-27', opponent:'USC', site:'@ Los Angeles, CA'},
+    {date:'2026-10-03', opponent:'West Valley College', site:'vs West Valley (Stockton)'},
+    {date:'2026-10-03', opponent:'American River College', site:'vs American River (Stockton)'},
+    {date:'2026-10-09', opponent:'San Jose State', site:'@ San Jose, CA'},
+    {date:'2026-10-11', opponent:'LMU', site:'vs LMU (Stockton)'},
+    {date:'2026-10-16', opponent:'UC Davis', site:'@ Davis, CA'},
+    {date:'2026-10-17', opponent:"Saint Mary's", site:"@ Moraga, CA"},
+    {date:'2026-10-18', opponent:'Princeton', site:'vs Princeton (Stockton)'},
+    {date:'2026-10-23', opponent:'Harvard', site:'Santa Clara, CA'},
+    {date:'2026-10-24', opponent:'Iona', site:'San Jose, CA'},
+    {date:'2026-10-24', opponent:'Bucknell', site:'Santa Clara, CA'},
+    {date:'2026-11-01', opponent:'Air Force', site:'@ USAF Academy, CO'},
+    {date:'2026-11-06', opponent:'Santa Clara', site:'vs Santa Clara (Stockton)'},
+    {date:'2026-11-08', opponent:'Pepperdine', site:'vs Pepperdine (Stockton)'},
+    {date:'2026-11-13', opponent:'UC Irvine', site:'@ Irvine, CA'},
+    {date:'2026-11-20', opponent:'WCC Championships (field TBD)', site:'Santa Clara, CA'},
+  ],
+  'Princeton': [
+    {date:'2026-09-04', opponent:'George Washington', site:'Navy Invitational — Annapolis, MD'},
+    {date:'2026-09-05', opponent:'Air Force', site:'Navy Invitational — Annapolis, MD'},
+    {date:'2026-09-05', opponent:'Salem', site:'Navy Invitational — Annapolis, MD'},
+    {date:'2026-09-11', opponent:"St. Mary's", site:'Princeton Invitational — Princeton, NJ'},
+    {date:'2026-09-12', opponent:'Navy', site:'Princeton Invitational — Princeton, NJ'},
+    {date:'2026-09-12', opponent:'San Jose State', site:'Princeton Invitational — Princeton, NJ'},
+    {date:'2026-09-13', opponent:'Pepperdine', site:'Princeton Invitational — Princeton, NJ'},
+    {date:'2026-09-13', opponent:"Mt. St. Mary's", site:'Princeton Invitational — Princeton, NJ'},
+    {date:'2026-09-18', opponent:'MPSF Invitational (field TBD)', site:'@ Palo Alto, CA'},
+    {date:'2026-10-03', opponent:'Harvard', site:'vs Harvard (Princeton)'},
+    {date:'2026-10-03', opponent:'MIT', site:'vs MIT (Princeton)'},
+    {date:'2026-10-04', opponent:'Brown', site:'vs Brown (Princeton)'},
+    {date:'2026-10-10', opponent:'Fordham', site:'@ Bronx, NY'},
+    {date:'2026-10-10', opponent:'Iona', site:'@ New Rochelle, NY'},
+    {date:'2026-10-10', opponent:'LIU', site:'@ Brooklyn, NY'},
+    {date:'2026-10-18', opponent:'Pacific', site:'@ Stockton, CA'},
+    {date:'2026-10-21', opponent:'California', site:'@ Berkeley, CA'},
+    {date:'2026-10-22', opponent:'Santa Clara', site:'Santa Clara Invitational — Santa Clara, CA'},
+    {date:'2026-10-24', opponent:'Cal Baptist', site:'Santa Clara Invitational — San Jose, CA'},
+    {date:'2026-10-25', opponent:'UC Davis', site:'Santa Clara Invitational — San Jose, CA'},
+    {date:'2026-10-30', opponent:'Fordham', site:'vs Fordham (Princeton)'},
+    {date:'2026-10-31', opponent:'Iona', site:'vs Iona (Princeton)'},
+    {date:'2026-10-31', opponent:'LIU', site:'vs LIU (Princeton)'},
+    {date:'2026-11-07', opponent:'Harvard', site:'@ Cambridge, MA'},
+    {date:'2026-11-07', opponent:'MIT', site:'@ Cambridge, MA'},
+    {date:'2026-11-08', opponent:'Brown', site:'@ Providence, RI'},
+    {date:'2026-11-20', opponent:'NWPC Tournament (field TBD)', site:'Cambridge, MA'},
+    {date:'2026-12-04', opponent:'NCAA Tournament (field TBD)', site:'La Jolla, CA'},
+  ],
+  'Fordham': [
+    {date:'2026-08-28', opponent:'Iona', site:'Scrimmage — Bronx, NY'},
+    {date:'2026-08-29', opponent:'Pacific', site:'Bruno Classic — Providence, RI'},
+    {date:'2026-08-29', opponent:'Gannon', site:'Bruno Classic — Providence, RI'},
+    {date:'2026-08-30', opponent:'UC Davis', site:'Bruno Classic — Providence, RI'},
+    {date:'2026-08-30', opponent:'Iona', site:'Bruno Classic — Providence, RI'},
+    {date:'2026-09-11', opponent:'Pepperdine', site:'vs Pepperdine (Bronx)'},
+    {date:'2026-09-13', opponent:'San Jose State', site:'vs San Jose State (Bronx)'},
+    {date:'2026-09-19', opponent:'Bucknell', site:'Bison Invitational — @ Lewisburg, PA'},
+    {date:'2026-09-19', opponent:"Mt. St. Mary's", site:'Bison Invitational — Lewisburg, PA'},
+    {date:'2026-09-19', opponent:'Mercyhurst', site:'Bison Invitational — Lewisburg, PA'},
+    {date:'2026-09-25', opponent:'UCLA', site:'@ Los Angeles, CA'},
+    {date:'2026-09-27', opponent:'Long Beach State', site:'@ Long Beach, CA'},
+    {date:'2026-09-28', opponent:'Cal Baptist', site:'@ Riverside, CA'},
+    {date:'2026-10-09', opponent:'Wagner', site:'vs Wagner (Bronx)'},
+    {date:'2026-10-10', opponent:'Princeton', site:'vs Princeton (Bronx)'},
+    {date:'2026-10-10', opponent:'Navy', site:'vs Navy (Bronx)'},
+    {date:'2026-10-11', opponent:'George Washington', site:'vs George Washington (Bronx)'},
+    {date:'2026-10-15', opponent:'Iona', site:'vs Iona (Bronx)'},
+    {date:'2026-10-17', opponent:'Bucknell', site:'vs Bucknell (Bronx)'},
+    {date:'2026-10-17', opponent:"Mt. St. Mary's", site:"vs Mt. St. Mary's (Bronx)"},
+    {date:'2026-10-17', opponent:'Mercyhurst', site:'vs Mercyhurst (Bronx)'},
+    {date:'2026-10-24', opponent:'Wagner', site:'@ Staten Island, NY'},
+    {date:'2026-10-25', opponent:'Navy', site:'@ Annapolis, MD'},
+    {date:'2026-10-25', opponent:'George Washington', site:'@ Annapolis, MD'},
+    {date:'2026-10-30', opponent:'Princeton', site:'@ Princeton, NJ'},
+    {date:'2026-11-06', opponent:'California', site:'@ Berkeley, CA'},
+    {date:'2026-11-08', opponent:'Stanford', site:'@ Stanford, CA'},
+    {date:'2026-11-20', opponent:'Mid-Atlantic Championship (field TBD)', site:'Lewisburg, PA'},
+    {date:'2026-12-04', opponent:'NCAA Championship (field TBD)', site:'La Jolla, CA'},
+  ],
+};
+// Backfills each school's real 2026 schedule the same way ensureSeedTeamsAndSchedule() does for
+// Cal — guarded by date+opponent (not just "team has zero games") since these teams already carry
+// their 2024-2025 history from ensureOpponentSchoolResults(), so a length===0 check would never fire.
+function ensureSchoolSeed2026Schedule(){
+  Object.keys(SEED_SCHOOL_2026_SCHEDULE).forEach(teamName=>{
+    const team = app.teams.find(t=>t.name.toLowerCase()===teamName.toLowerCase());
+    if(!team) return;
+    const exists = (date, opponent) => app.games.some(g=>g.teamId===team.id && g.date===date && g.opponent===opponent);
+    SEED_SCHOOL_2026_SCHEDULE[teamName].forEach(s=>{
+      if(exists(s.date, s.opponent)) return;
+      const game = blankGame(team.id);
+      game.opponent = s.opponent; game.date = s.date; game.location = s.site; game.status = 'upcoming';
+      addOpponent(s.opponent, false);
+      app.games.push(game);
+      team.games.push(game.id);
+    });
+  });
+}
 // Real quarter-by-quarter goal data for each school's OWN schedule (any opponent, not just Cal),
 // sourced from 6-8sports.com's live-scoring API (the same source behind HISTORICAL_MATCHUPS).
 // Tuple shape per event: [quarter, ms elapsed in that quarter, side, scorer name, action label].
@@ -3657,6 +3901,22 @@ function buildPlayerSeasonStats(player){
 // When a goal's goalie wasn't captured (no Save event logged yet for that team when the goal happened),
 // assume it was the starting/primary goalie — cap '1' specifically, not a backup like '1A'/'1B' — looked
 // up from the opposing side's roster for that exact game.
+// Same "assume the starting goalie, cap #1" fallback as findDefaultGoalie, but for spots that don't
+// have a per-game boxScore to check — instead looks up the opponent's actual current roster (the only
+// roster data most opponents have on record) and returns the real name wearing cap 1, e.g. "Riley
+// Clansen" instead of the bare digit. Only Cal and Stanford have a roster on file, so this comes up
+// empty for every other opponent — there's nothing to look up yet, not a bug.
+function findOpponentCap1Name(opponentName){
+  const nameLower = (opponentName||'').trim().toLowerCase();
+  if(!nameLower) return null;
+  const key = Object.keys(CURRENT_ROSTERS).find(k=>{
+    const label = CURRENT_ROSTERS[k].label.replace(/\s*\(\d{4}\)\s*$/,'').toLowerCase();
+    return label===nameLower || nameLower.includes(label) || label.includes(nameLower);
+  });
+  if(!key) return null;
+  const p = CURRENT_ROSTERS[key].players.find(pl=>String(pl.cap)==='1');
+  return p ? p.name : null;
+}
 function findDefaultGoalie(box, scorerNameLower){
   let ourSide = null;
   Object.keys(box).forEach(sideKey=>{
@@ -3687,7 +3947,10 @@ function buildPlayerEventLog(player){
         // points at the opponent — resolve it against this specific game's opponent roster instead
         // of hardcoding N/A and throwing away information the event already carries.
         let against = 'N/A';
-        if(ev.vsCap!=null){ const r=(game.oppRoster||[]).find(rr=>String(rr.cap)===String(ev.vsCap)); against = (r && r.name) || `#${ev.vsCap}`; }
+        if(ev.vsCap!=null){
+          const r=(game.oppRoster||[]).find(rr=>String(rr.cap)===String(ev.vsCap));
+          against = (r && r.name) || (String(ev.vsCap)==='1' && findOpponentCap1Name(game.opponent)) || `#${ev.vsCap}`;
+        }
         rows.push({ date:game.date||'TBD', opponent:game.opponent||'TBD', quarter:periodLabel(q), time:eventClockLabel(game, q, ev), score:`${Math.round(teamScore*10)/10}-${Math.round(oppScore*10)/10}`, event:eventLabel, against });
       });
     });
@@ -3782,14 +4045,14 @@ function buildPlayerEventLog(player){
   });
   // Never leave "who this happened against" blank — when no specific opposing player was captured,
   // credit their #1 (their default/starting cap) rather than showing a dead-end "N/A".
-  rows.forEach(r=>{ if(!r.against || r.against==='N/A') r.against = '#1'; });
+  rows.forEach(r=>{ if(!r.against || r.against==='N/A') r.against = findOpponentCap1Name(r.opponent) || '#1'; });
   return rows.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 }
 function renderPlayerEventLog(player){
   const rows = buildPlayerEventLog(player);
   const table = document.getElementById('playerEventLogTable');
   const note = document.getElementById('playerEventLogNote');
-  if(note) note.textContent = rows.length ? `${rows.length} event(s) — time/score carried forward from the closest known point in the game log where not directly logged; "#1" stands in for the opposing player when no specific matchup was captured.` : '';
+  if(note) note.textContent = rows.length ? `${rows.length} event(s) — time/score carried forward from the closest known point in the game log where not directly logged; when no specific matchup was captured, the opposing team's #1 stands in — by name where their roster is on file, by cap number otherwise.` : '';
   if(!table) return;
   if(rows.length===0){ table.innerHTML = '<tr><td style="color:var(--text-faint);padding:14px;">No events logged for this player yet.</td></tr>'; return; }
   table.innerHTML = `<thead><tr><th>Date</th><th>Opponent</th><th>Q</th><th>Time</th><th>Score</th><th>Event</th><th>Against</th></tr></thead>
