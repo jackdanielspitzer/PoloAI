@@ -1134,9 +1134,69 @@ let _syncState = { lastPushedAt: 0, lastPulledAt: 0, pushTimer: null, pulling: f
 
 function sharedStateConfigured(){ return SHARED_STATE_URL && !SHARED_STATE_URL.startsWith('PASTE_'); }
 
+// localStorage's few-MB-per-origin cap is what the storage warning above was about — two full
+// seasons of tracked games (hundreds of games, thousands of individual events) is a genuinely large
+// dataset, easily larger than that cap allows, especially in Safari. IndexedDB, on the very same
+// device, gets a much larger allowance (typically hundreds of MB+) and is the real fix. localStorage
+// stays in the loop purely as a synchronous read for the very first paint, before the inherently
+// async IndexedDB read can resolve — every save still writes to both, but once IndexedDB has
+// answered at load time it's treated as authoritative, since it's the one that can't silently fall
+// behind the way a full localStorage does.
+const IDB_NAME = 'poloiq-db', IDB_STORE = 'kv', IDB_KEY = 'poloai-app-state';
+function openAppDb(){
+  return new Promise((resolve)=>{
+    if(!window.indexedDB){ resolve(null); return; }
+    try{
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = ()=>resolve(req.result);
+      req.onerror = ()=>resolve(null);
+    }catch(e){ resolve(null); }
+  });
+}
+async function idbSaveState(jsonString){
+  const db = await openAppDb(); if(!db) return false;
+  return new Promise((resolve)=>{
+    try{
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(jsonString, IDB_KEY);
+      tx.oncomplete = ()=>resolve(true);
+      tx.onerror = ()=>resolve(false);
+    }catch(e){ resolve(false); }
+  });
+}
+async function idbLoadStateString(){
+  const db = await openAppDb(); if(!db) return null;
+  return new Promise((resolve)=>{
+    try{
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = ()=>resolve(req.result || null);
+      req.onerror = ()=>resolve(null);
+    }catch(e){ resolve(null); }
+  });
+}
+// Checked once at boot, right after the instant paint from localStorage: if IndexedDB holds a
+// fuller/different snapshot — most commonly because localStorage had already hit its ceiling and
+// silently stopped accepting new saves — adopt it and repaint. Re-running the ensure* seed
+// functions afterward is safe (they're all idempotent) and covers a snapshot that predates seed
+// data added to this build since it was saved.
+async function reconcileWithIndexedDb(){
+  const raw = await idbLoadStateString();
+  if(!raw){ saveState(); return; } // nothing in IndexedDB yet — this save also seeds it for next time
+  if(raw === JSON.stringify(app)) return; // already in sync
+  let stored; try{ stored = JSON.parse(raw); }catch(e){ return; }
+  if(!stored) return;
+  Object.assign(app, { page: app.page, selectedTeamId: app.selectedTeamId, selectedGameId: app.selectedGameId, selectedPlayerId: app.selectedPlayerId, manageMode: app.manageMode, currentQ: app.currentQ, listening:false, recognition:null, pendingBuffer:'', pendingTimer:null, lastVoiceActor:null, lastVoiceActorAt:0 }, stored);
+  if(!Array.isArray(app.opponents)) app.opponents = [];
+  ensureSeedTeamsAndSchedule(); ensurePastSeasonResults(); ensureOpponentSchoolResults(); ensureSchoolSeed2026Schedule();
+  (app.teams||[]).forEach(applyBrandingIfKnown);
+  renderAll();
+}
 function saveState(){
+  const _stateJson = JSON.stringify(app);
   try{
-    localStorage.setItem('poloai-app-state', JSON.stringify(app));
+    localStorage.setItem('poloai-app-state', _stateJson);
   }catch(e){
     // A full local storage quota (very plausible once team logos/player photos or a full season of
     // history pile up — Safari's per-origin quota is noticeably stricter than Chrome's) used to
@@ -1149,9 +1209,10 @@ function saveState(){
     console.warn('local save failed (storage full?)', e);
     if(!_syncState.storageWarned){
       _syncState.storageWarned = true;
-      showAppNotification('⚠️ This device is out of local storage space — changes still sync to the shared backend, but won\'t survive an offline reload here. Removing an old team logo or player photo usually frees enough room.', 'bad');
+      showAppNotification('⚠️ This device\'s quick local cache is full — falling back to a larger local store and the shared backend, so nothing is lost.', 'bad');
     }
   }
+  idbSaveState(_stateJson).catch(()=>{});
   clearTimeout(_syncState.pushTimer);
   _syncState.pushTimer = setTimeout(pushSharedStateToServer, 700);
 }
@@ -1648,13 +1709,39 @@ function toggleAccountDropdown(e){ if(e) e.stopPropagation(); const d=document.g
 function closeAccountDropdown(){ const d=document.getElementById('accountDropdown'); if(d) d.classList.add('hidden'); }
 document.addEventListener('click', closeAccountDropdown);
 
-function handleTeamLogoFile(e){ const f = e.target.files[0]; if(!f) return; const reader = new FileReader(); reader.onload = ()=>{ const data = reader.result; const preview = document.getElementById('teamLogoPreview'); if(preview){ preview.src = data; } }; reader.readAsDataURL(f); }
+// A phone camera photo straight off the file picker can easily be 3-8MB — stored as-is, a
+// player's headshot or a team logo alone can blow through a whole browser's localStorage quota
+// (a few MB total, shared across everything the app keeps locally). Nothing here ever needs more
+// than a modest thumbnail, so every upload gets downscaled and re-compressed to JPEG before it
+// touches app state — typically shrinking a multi-megabyte photo down to well under 100KB.
+function compressImageFile(file, maxDim, quality){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(reader.error);
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=>resolve(reader.result); // fall back to the original rather than lose the upload entirely
+      img.onload = ()=>{
+        let { width, height } = img;
+        if(width > maxDim || height > maxDim){
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width*scale); height = Math.round(height*scale);
+        }
+        const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
+        try{ resolve(canvas.toDataURL('image/jpeg', quality)); }
+        catch(e){ resolve(reader.result); } // e.g. a tainted-canvas edge case — original beats nothing
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+function handleTeamLogoFile(e){ const f = e.target.files[0]; if(!f) return; compressImageFile(f, 400, 0.85).then(data=>{ const preview = document.getElementById('teamLogoPreview'); if(preview){ preview.src = data; } }); }
 function handlePlayerPhotoFile(e){
   const f = e.target.files[0]; if(!f) return;
   const player = findPlayer(app.selectedPlayerId); if(!player) return;
-  const reader = new FileReader();
-  reader.onload = ()=>{ player.photo = reader.result; saveState(); renderPlayer(); };
-  reader.readAsDataURL(f);
+  compressImageFile(f, 300, 0.85).then(data=>{ player.photo = data; saveState(); renderPlayer(); });
 }
 
 const DEFAULT_LOGO_DATA_URI = 'poloiq-header.png';
@@ -6501,6 +6588,7 @@ function importAppData(evt){
 
 document.addEventListener('DOMContentLoaded', ()=>{
   loadState(); setupRecognition(); renderAll(); // instant paint from the local cache
+  reconcileWithIndexedDb(); // then adopt IndexedDB's copy if it's ahead of localStorage's (async, non-blocking)
   checkGameStateNotifications(app.games); // establish baseline silently — no toast for state already known at boot
   checkUpcomingGameNotifications();
   pullSharedStateFromServer(false).then(startSharedStatePolling); // then hydrate with the shared copy and start syncing
