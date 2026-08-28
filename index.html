@@ -846,6 +846,7 @@
           <div id="playerLiveGameStats" style="margin-top:8px;font-size:13px;"></div>
         </div>
         <div class="stats-grid" id="playerSummaryCards"></div>
+        <span id="playerSummaryCaption" style="font-size:11px;color:var(--text-faint);"></span>
         <div class="panel" style="margin-top:18px;">
           <div class="data-row">
             <h2>Season &amp; lifetime stats</h2>
@@ -1187,6 +1188,14 @@ async function pullSharedStateFromServer(applyIfNewer){
     // simply missing.
     SHARED_KEYS.forEach(k=>{ if(typeof data[k]==='undefined') return; if(JSON.stringify(app[k]) !== JSON.stringify(data[k])){ app[k] = data[k]; changed = true; } });
     (app.teams||[]).forEach(applyBrandingIfKnown);
+    // A pulled snapshot can be older than the seed data baked into THIS build of the app — it was
+    // written by whatever version of the code last pushed successfully, which for a long stretch was
+    // a broken backend deployment that couldn't push at all. Re-running the seed/ensure functions
+    // (idempotent, matched by date+opponent) tops the real historical/2026 games back up instead of
+    // silently leaving a coach staring at a handful of games because the shared copy predates them.
+    if(changed){
+      ensureSeedTeamsAndSchedule(); ensurePastSeasonResults(); ensureOpponentSchoolResults(); ensureSchoolSeed2026Schedule();
+    }
     _syncState.lastPulledAt = serverTime;
     if(changed){ localStorage.setItem('poloai-app-state', JSON.stringify(app)); _syncState.lastPushedAt = serverTime; checkGameStateNotifications(app.games); renderAll(); }
   }catch(e){ _syncState.backendAvailable = false; console.warn('shared-state pull failed:', e); }
@@ -3769,14 +3778,21 @@ function renderPlayer(){ const player = findPlayer(app.selectedPlayerId); if(!pl
   const history = app.games.filter(g=>getGameEvents(g).some(ev=>ev.playerId===player.id));
   const seasonStats = buildPlayerSeasonStats(player);
   const lt = seasonStats.lifetime;
+  // Sh% is only ever computed from the games that actually tracked shot attempts — imported historical
+  // results never did (see buildPlayerSeasonStats) — so it can legitimately look inconsistent next to
+  // the true lifetime Goals count, e.g. "3 goals, 5 shots, 0%" when the 3 goals came from a different,
+  // untracked season than the 5 tracked shots. "Goals" stays the honest all-time total rather than being
+  // artificially cut down to match; "Shots"/"Sh%" are labeled and captioned as the narrower figure they are.
   const shPct = lt.sh ? Math.round((lt.gWithShotData/lt.sh)*100) + '%' : '—';
   document.getElementById('playerSummaryCards').innerHTML = `
     <div class="stat-card"><h3>Games (lifetime)</h3><div class="value">${lt.gp||0}</div></div>
     <div class="stat-card"><h3>Goals</h3><div class="value">${lt.g||0}</div></div>
-    <div class="stat-card"><h3>Shots</h3><div class="value">${lt.sh||0}</div></div>
-    <div class="stat-card"><h3>SH%</h3><div class="value">${shPct}</div></div>
+    <div class="stat-card"><h3>Shots (live-tracked)</h3><div class="value">${lt.sh||0}</div></div>
+    <div class="stat-card"><h3>SH% (live-tracked)</h3><div class="value">${shPct}</div></div>
     <div class="stat-card"><h3>Saves</h3><div class="value">${lt.sv||0}</div></div>
   `;
+  const summaryCaption = document.getElementById('playerSummaryCaption');
+  if(summaryCaption) summaryCaption.textContent = 'Shots/Sh% only count games where shot attempts were actually tracked live — Goals is the full lifetime total, so the two can look mismatched (e.g. real goals from an untracked season vs. shots from a different, tracked one).';
   const seasonTable = document.getElementById('playerSeasonStatsTable');
   if(seasonTable){
     if(seasonStats.seasons.length===0){
