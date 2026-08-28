@@ -678,6 +678,10 @@
           <input type="checkbox" id="gamesScopeToggle" onchange="renderGames()" style="margin-right:6px;vertical-align:middle;" />
           <span>Show every team's games (scouting view)</span>
         </label>
+        <label id="gamesHistoryToggleRow" class="entity-meta" style="cursor:pointer;user-select:none;">
+          <input type="checkbox" id="gamesHistoryToggle" onchange="renderGames()" style="margin-right:6px;vertical-align:middle;" />
+          <span>Include 2024-2025 history (scouting/stats only — not shown by default)</span>
+        </label>
         <div id="gameList"></div>
       </div>
       <div class="panel hidden" id="gameFormPanel">
@@ -1162,6 +1166,113 @@ async function pushSharedStateToServer(){
 // startup pull) always applies; the polling loop passes true so it never clobbers a local edit
 // that's still in flight to the server. Always checks the cheap metadata endpoint first and only
 // pays for the full chunk-by-chunk fetch when something actually changed since our last pull.
+// Whether `game` is one of the baked-in seed games (Cal's own history, an opponent school's own
+// 2024-2025 schedule, or anyone's real 2026 schedule) rather than something a real user scheduled
+// by hand. Used only to protect seed data from ever being deleted by a sync pull — see
+// mergeGamesFromServer below.
+function isSeedGame(game){
+  const team = findTeam(game.teamId); if(!team) return false;
+  const tname = (team.name||'').trim().toLowerCase();
+  const matches = arr => (arr||[]).some(s=>s.date===game.date && s.opponent===game.opponent);
+  if(tname==='california' && (matches(SEED_PAST_RESULTS) || matches(SEED_2026_SCHEDULE))) return true;
+  const schoolResultsKey = Object.keys(SEED_SCHOOL_RESULTS).find(n=>n.toLowerCase()===tname);
+  if(schoolResultsKey && matches(SEED_SCHOOL_RESULTS[schoolResultsKey])) return true;
+  const school2026Key = Object.keys(SEED_SCHOOL_2026_SCHEDULE).find(n=>n.toLowerCase()===tname);
+  if(school2026Key && matches(SEED_SCHOOL_2026_SCHEDULE[school2026Key])) return true;
+  return false;
+}
+// A wholesale replace of `games`/`teams` on every sync pull is how hundreds of seeded games have
+// been silently vanishing: whatever the shared backend happens to hold (which can be an older,
+// thinner, or mid-save snapshot) was overwriting the rich local seed data outright. Merge by id
+// instead: take the remote's version of anything both sides know about (so live score/event edits
+// still sync), add anything only the remote knows about (so a real user's newly-scheduled game
+// syncs in), and for anything only the LOCAL side knows about — keep it if it's baked-in seed data
+// (the remote just hasn't caught up yet), drop it only if it's a real user-scheduled game the
+// remote no longer has (an actual deletion from another client). Teams are never dropped locally at
+// all — losing a team cascades into losing everything filed under it, which is worse than a rare
+// stale team lingering an extra sync cycle.
+function mergeGamesFromServer(localGames, remoteGames){
+  if(!Array.isArray(remoteGames)) return localGames;
+  const remoteById = new Map(remoteGames.filter(g=>g && g.id).map(g=>[g.id, g]));
+  const seenIds = new Set(); const merged = [];
+  (localGames||[]).forEach(g=>{
+    if(!g || !g.id) return;
+    if(remoteById.has(g.id)){ merged.push(remoteById.get(g.id)); seenIds.add(g.id); }
+    else if(isSeedGame(g)){ merged.push(g); }
+    // else: a real, non-seed local game missing from the remote — treat as deleted elsewhere, drop it.
+  });
+  remoteGames.forEach(g=>{ if(g && g.id && !seenIds.has(g.id)){ merged.push(g); seenIds.add(g.id); } });
+  return dedupeGamesByMatchup(merged);
+}
+// blankGame() ids are random per call, not derived from (team, date, opponent) — so a browser that
+// seeds its own local copy of, say, "Cal vs USC 2025-10-05" independently from another device ends
+// up with two different ids for what's really the same logical game. Merging by id alone can't
+// catch that; this collapses any such pair after the id-merge, keeping whichever copy has more
+// logged events (the real, live-tracked one beats an untouched placeholder) — a tie keeps whichever
+// came first, which is stable run to run.
+function dedupeGamesByMatchup(games){
+  const bestByKey = new Map(); const order = [];
+  games.forEach(g=>{
+    if(!g) return;
+    const key = g.teamId+'|'+g.date+'|'+g.opponent;
+    const eventCount = g.quarters ? Object.values(g.quarters).reduce((s,arr)=>s+(Array.isArray(arr)?arr.length:0),0) : 0;
+    const existing = bestByKey.get(key);
+    if(!existing){ bestByKey.set(key, {g, eventCount}); order.push(key); }
+    else if(eventCount > existing.eventCount){ bestByKey.set(key, {g, eventCount}); }
+  });
+  return order.map(k=>bestByKey.get(k).g);
+}
+// Generic "merge by id, remote wins on a shared id, never drop a local-only entry" merge — used for
+// both teams and users. For users specifically this matters just as much as it does for games: a
+// wholesale replace with a stale/thin remote `users` snapshot can silently drop the row for the
+// account you're actually logged in as on THIS device (app.currentUserId isn't synced, so you'd
+// still look logged in, but currentUser() would return null and every permission check — including
+// whether voice-tracked phrases are allowed to save — would silently fail).
+function mergeByIdKeepLocal(localArr, remoteArr){
+  if(!Array.isArray(remoteArr)) return localArr;
+  const remoteById = new Map(remoteArr.filter(t=>t && t.id).map(t=>[t.id, t]));
+  const seenIds = new Set(); const merged = [];
+  (localArr||[]).forEach(t=>{
+    if(!t || !t.id) return;
+    if(remoteById.has(t.id)){ merged.push(remoteById.get(t.id)); seenIds.add(t.id); }
+    else { merged.push(t); }
+  });
+  remoteArr.forEach(t=>{ if(t && t.id && !seenIds.has(t.id)){ merged.push(t); seenIds.add(t.id); } });
+  return merged;
+}
+function mergeTeamsFromServer(localTeams, remoteTeams){ return mergeByIdKeepLocal(localTeams, remoteTeams); }
+// blankTeam() ids are random per call too, same as games — so a browser that seeds its own local
+// copy of "California" independently from another device (or from this same shared backend on a
+// separate occasion) ends up with two team objects, two different ids, for the same real team.
+// mergeByIdKeepLocal can't catch that since the ids genuinely don't match. This collapses any teams
+// sharing a name (case/whitespace-insensitive) down to one canonical copy — preferring whichever is
+// claimed, then whichever has more players, then whichever came first — and returns a remap so every
+// game pointing at a discarded duplicate's id can be repointed at the survivor instead of quietly
+// orphaning half a team's games under a team nobody can see anymore.
+function dedupeTeamsByName(teams){
+  const groups = new Map();
+  (teams||[]).forEach(t=>{
+    if(!t || !t.id) return;
+    const key = (t.name||'').trim().toLowerCase(); if(!key) return;
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  });
+  const remap = new Map(); const keepIds = new Set();
+  groups.forEach(group=>{
+    if(group.length===1){ keepIds.add(group[0].id); return; }
+    const score = t => (t.claimStatus==='claimed'?1000:0) + (t.players ? t.players.length : 0);
+    let canonical = group[0];
+    group.forEach(t=>{ if(score(t) > score(canonical)) canonical = t; });
+    keepIds.add(canonical.id);
+    group.forEach(t=>{ if(t.id!==canonical.id) remap.set(t.id, canonical.id); });
+  });
+  const seen = new Set();
+  const dedupedTeams = (teams||[]).filter(t=>{
+    if(!t || !t.id || !keepIds.has(t.id)) return false;
+    if(seen.has(t.id)) return false; seen.add(t.id); return true;
+  });
+  return { teams: dedupedTeams, remap };
+}
 async function pullSharedStateFromServer(applyIfNewer){
   if(_syncState.pulling || !sharedStateConfigured()) return; _syncState.pulling = true;
   try{
@@ -1184,18 +1295,44 @@ async function pullSharedStateFromServer(applyIfNewer){
     const data = JSON.parse(full);
     let changed = false;
     // Only apply fields the server actually has — never let a partial/malformed remote payload
-    // (an old write, a hand-edited sheet, a bug) blank out good local data for a field it's
-    // simply missing.
-    SHARED_KEYS.forEach(k=>{ if(typeof data[k]==='undefined') return; if(JSON.stringify(app[k]) !== JSON.stringify(data[k])){ app[k] = data[k]; changed = true; } });
-    (app.teams||[]).forEach(applyBrandingIfKnown);
-    // A pulled snapshot can be older than the seed data baked into THIS build of the app — it was
-    // written by whatever version of the code last pushed successfully, which for a long stretch was
-    // a broken backend deployment that couldn't push at all. Re-running the seed/ensure functions
-    // (idempotent, matched by date+opponent) tops the real historical/2026 games back up instead of
-    // silently leaving a coach staring at a handful of games because the shared copy predates them.
-    if(changed){
-      ensureSeedTeamsAndSchedule(); ensurePastSeasonResults(); ensureOpponentSchoolResults(); ensureSchoolSeed2026Schedule();
+    // (an old write, a hand-edited sheet, a bug) blank out good local data for a field it's simply
+    // missing. teams/games merge by id (see mergeTeamsFromServer/mergeGamesFromServer) so a thin or
+    // stale remote snapshot can never silently delete baked-in seed history; users merge by id too
+    // (mergeByIdKeepLocal) so it can't silently log you out by dropping your own account row; the
+    // rest are small, user-authored lists where a wholesale replace is safe.
+    if(typeof data.teams!=='undefined'){
+      const mergedTeams = mergeTeamsFromServer(app.teams, data.teams);
+      if(JSON.stringify(app.teams) !== JSON.stringify(mergedTeams)){ app.teams = mergedTeams; changed = true; }
     }
+    if(typeof data.games!=='undefined'){
+      const mergedGames = mergeGamesFromServer(app.games, data.games);
+      if(JSON.stringify(app.games) !== JSON.stringify(mergedGames)){ app.games = mergedGames; changed = true; }
+    }
+    if(typeof data.users!=='undefined'){
+      const mergedUsers = mergeByIdKeepLocal(app.users, data.users);
+      if(JSON.stringify(app.users) !== JSON.stringify(mergedUsers)){ app.users = mergedUsers; changed = true; }
+    }
+    ['opponents','plays','customMatchupGames'].forEach(k=>{ if(typeof data[k]==='undefined') return; if(JSON.stringify(app[k]) !== JSON.stringify(data[k])){ app[k] = data[k]; changed = true; } });
+    // Collapse any teams that ended up duplicated by name (independent sessions/devices each seeding
+    // their own copy of, say, "California" with a different random id) and repoint every game that
+    // referenced a discarded duplicate onto the surviving team — otherwise a Team page would quietly
+    // show only half that team's games, split across two team ids nobody can tell apart by name.
+    const teamDedupe = dedupeTeamsByName(app.teams);
+    if(teamDedupe.remap.size){
+      app.teams = teamDedupe.teams;
+      app.games.forEach(g=>{ if(teamDedupe.remap.has(g.teamId)) g.teamId = teamDedupe.remap.get(g.teamId); });
+      app.games = dedupeGamesByMatchup(app.games);
+      changed = true;
+    }
+    (app.teams||[]).forEach(applyBrandingIfKnown);
+    // Deliberately NOT re-running ensureSeedTeamsAndSchedule() (or the other ensure* functions) here.
+    // A pulled snapshot really can predate the seed data baked into this build, but re-seeding on
+    // every background pull is unsafe: ensureSeedTeamsAndSchedule() creates a team with a brand-new
+    // random ID whenever one is missing by name, and a pull can legitimately (if rarely) land mid-race
+    // with an in-flight save and momentarily show a team as "missing." Doing that on an 8-second poll
+    // risks silently recreating a team + its entire game set over and over. If seed data is ever
+    // missing after a pull, that's what the normal page-load seeding (loadState) is for — this stays
+    // a pure "take what the server has" sync, nothing more.
     _syncState.lastPulledAt = serverTime;
     if(changed){ localStorage.setItem('poloai-app-state', JSON.stringify(app)); _syncState.lastPushedAt = serverTime; checkGameStateNotifications(app.games); renderAll(); }
   }catch(e){ _syncState.backendAvailable = false; console.warn('shared-state pull failed:', e); }
@@ -3504,6 +3641,9 @@ function saveGame(){
 // hundreds of other teams' games a coach never asked for — default to just the team they've
 // claimed, with an explicit opt-in toggle for when they actually do want to scout someone else's
 // results. Nobody with a claimed team, or nobody logged in at all, still sees everything.
+// 2024-2025 imported results are backend data for tactics/stats, not something to browse day to
+// day — this list defaults to 2026-and-forward games only, with an explicit opt-in toggle (like the
+// team-scope one above) for a coach who actually wants the older seasons for scouting.
 function renderGames(){ const list = document.getElementById('gameList'); list.innerHTML='';
   const u = currentUser();
   const myTeam = u && u.teamId ? findTeam(u.teamId) : null;
@@ -3511,8 +3651,11 @@ function renderGames(){ const list = document.getElementById('gameList'); list.i
   const toggle = document.getElementById('gamesScopeToggle');
   if(toggleRow) toggleRow.style.display = myTeam ? 'flex' : 'none';
   const showAll = !myTeam || (toggle && toggle.checked);
-  const games = showAll ? app.games : app.games.filter(g=>g.teamId===myTeam.id);
-  if(games.length===0){ list.innerHTML = myTeam ? `<p style="color:var(--text-faint);">No games scheduled yet for ${myTeam.name}. Add a game to get started, or check "Show every team's games" above.</p>` : '<p style="color:var(--text-faint);">No games scheduled yet. Add a game to get started.</p>'; return; }
+  let games = showAll ? app.games : app.games.filter(g=>g.teamId===myTeam.id);
+  const historyToggle = document.getElementById('gamesHistoryToggle');
+  const includeHistory = historyToggle && historyToggle.checked;
+  if(!includeHistory) games = games.filter(g=>(g.date||'') >= '2026' || !g.date);
+  if(games.length===0){ list.innerHTML = myTeam ? `<p style="color:var(--text-faint);">No 2026 games scheduled yet for ${myTeam.name}. Add a game to get started, check "Show every team's games" above, or check "Include 2024-2025 history" to scout older results.</p>` : '<p style="color:var(--text-faint);">No 2026 games scheduled yet. Add a game to get started, or check "Include 2024-2025 history" to scout older results.</p>'; return; }
   const ul=document.createElement('ul'); ul.className='minimal-list';
   games.sort((a,b)=> (a.date||'').localeCompare(b.date||'')).forEach(game=>{
     const team = findTeam(game.teamId);
