@@ -1135,7 +1135,23 @@ let _syncState = { lastPushedAt: 0, lastPulledAt: 0, pushTimer: null, pulling: f
 function sharedStateConfigured(){ return SHARED_STATE_URL && !SHARED_STATE_URL.startsWith('PASTE_'); }
 
 function saveState(){
-  localStorage.setItem('poloai-app-state', JSON.stringify(app));
+  try{
+    localStorage.setItem('poloai-app-state', JSON.stringify(app));
+  }catch(e){
+    // A full local storage quota (very plausible once team logos/player photos or a full season of
+    // history pile up — Safari's per-origin quota is noticeably stricter than Chrome's) used to
+    // silently break EVERY button in this app: every handler ends with `saveState(); render...()`,
+    // so an uncaught error thrown here aborted that trailing render call too. The underlying data
+    // had already changed in memory (a spliced-out event, a selected cap color) but the screen never
+    // updated to show it — which is exactly what "I click it and nothing happens" looks like from
+    // outside. Local persistence failing must never block the app from working: swallow the error,
+    // warn once, and let every caller's render still run.
+    console.warn('local save failed (storage full?)', e);
+    if(!_syncState.storageWarned){
+      _syncState.storageWarned = true;
+      showAppNotification('⚠️ This device is out of local storage space — changes still sync to the shared backend, but won\'t survive an offline reload here. Removing an old team logo or player photo usually frees enough room.', 'bad');
+    }
+  }
   clearTimeout(_syncState.pushTimer);
   _syncState.pushTimer = setTimeout(pushSharedStateToServer, 700);
 }
@@ -4429,6 +4445,17 @@ function buildQualityNote(text, base, actor, verb, targetCap){
   if(!m) return null;
   return {...base, playerId:actor.playerId, playerCap:actor.cap, side:actor.side, stat_type:'note', note:`${m[1]} ${verb}${targetCap!=null?` against #${targetCap}`:''}`};
 }
+// "on a great drive/move/cut/fake/finish" describes what the OFFENSIVE player (whoever drew the
+// exclusion/penalty) did to earn it — same drive/move noun set the goal-scoring rules already use,
+// just attributed to the drawer instead of a scorer. Exclusion/penalty calls had no equivalent of
+// the quality note the steal/block/goal rules already get, so "on a great drive" was silently
+// dropped instead of showing up as a note on the record.
+const DRIVE_NOTE = /\b(great|nice|good|perfect|beautiful|amazing)\s+(drive|move|cut|fake|finish)\b/;
+function buildDriveNote(text, base, actor){
+  const m = DRIVE_NOTE.exec(text);
+  if(!m) return null;
+  return {...base, playerId:actor.playerId, playerCap:actor.cap, side:actor.side, stat_type:'note', note:`${m[1]} ${m[2]}`};
+}
 // Finds which of the two spoken prepositions ("on"/"versus"/"against" = beaten party,
 // "by"/"from" = assister) most recently precedes a given mention, so a three-actor sentence like
 // "...versus 15 assisted on a great pass by 4" can be split correctly by role instead of by
@@ -4551,15 +4578,17 @@ const COMPOUND_RULES = [
   // out (they committed the foul) and light5 drew it — the opposite credit from the active phrasing
   // just below. Checked first so it wins over exclusion_pair's broader active-voice test.
   { name:'exclusion_passive', test:t=>/(exclud\w*|eject\w*)\s+by\b/.test(t)&&!/(drawn|drew|draws)/.test(t), build:(t,a1,a2,base,game)=>{
-      if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion_drawn'}];
+      if(onlyMentionIsCredited(a1,a2,t)){ const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion_drawn'}]; const note=buildDriveNote(t,base,a1); if(note) events.push(note); return events; }
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
-      if(a2){ const drawer = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = drawer.cap; events[0].vsId = drawer.playerId; events.push({...base, playerId:drawer.playerId, playerCap:drawer.cap, side:drawer.side, stat_type:'exclusion_drawn', vsCap:a1.cap, vsId:a1.playerId}); }
+      if(a2){ const drawer = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = drawer.cap; events[0].vsId = drawer.playerId; events.push({...base, playerId:drawer.playerId, playerCap:drawer.cap, side:drawer.side, stat_type:'exclusion_drawn', vsCap:a1.cap, vsId:a1.playerId}); const note=buildDriveNote(t,base,drawer); if(note) events.push(note); }
       return events;
     } },
   { name:'exclusion_pair', test:t=>/\b(exclud\w*|eject\w*)\b/.test(t)&&!/(drawn|drew|draws)/.test(t), build:(t,a1,a2,base,game)=>{
       if(a2){
         const committed = withSide(a2, oppositeSide(a1.side), game);
-        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion_drawn', vsCap:committed.cap, vsId:committed.playerId}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion', vsCap:a1.cap, vsId:a1.playerId}];
+        const events = [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion_drawn', vsCap:committed.cap, vsId:committed.playerId}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion', vsCap:a1.cap, vsId:a1.playerId}];
+        const note = buildDriveNote(t, base, a1); if(note) events.push(note);
+        return events;
       }
       return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
     } },
@@ -4569,15 +4598,17 @@ const COMPOUND_RULES = [
   // drew it — the opposite credit from "dark 3 draws a penalty on light 5" just below. Checked
   // first so it wins over penalty_against's broader test.
   { name:'penalty_passive', test:t=>/\bpenaliz\w*\s+by\b/.test(t) || /\bpenalty\b.*\bby\b/.test(t), build:(t,a1,a2,base,game)=>{
-      if(onlyMentionIsCredited(a1,a2,t)) return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn'}];
+      if(onlyMentionIsCredited(a1,a2,t)){ const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn'}]; const note=buildDriveNote(t,base,a1); if(note) events.push(note); return events; }
       const events=[{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
-      if(a2){ const drawer = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = drawer.cap; events[0].vsId = drawer.playerId; events.push({...base, playerId:drawer.playerId, playerCap:drawer.cap, side:drawer.side, stat_type:'penalty_drawn', vsCap:a1.cap, vsId:a1.playerId}); }
+      if(a2){ const drawer = withSide(a2, oppositeSide(a1.side), game); events[0].vsCap = drawer.cap; events[0].vsId = drawer.playerId; events.push({...base, playerId:drawer.playerId, playerCap:drawer.cap, side:drawer.side, stat_type:'penalty_drawn', vsCap:a1.cap, vsId:a1.playerId}); const note=buildDriveNote(t,base,drawer); if(note) events.push(note); }
       return events;
     } },
   { name:'penalty_against', test:t=>/penalty (against|on)\b/.test(t), build:(t,a1,a2,base,game)=>{
       if(a2){
         const committed = withSide(a2, oppositeSide(a1.side), game);
-        return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn', vsCap:committed.cap, vsId:committed.playerId}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion', vsCap:a1.cap, vsId:a1.playerId}];
+        const events = [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'penalty_drawn', vsCap:committed.cap, vsId:committed.playerId}, {...base, playerId:committed.playerId, playerCap:committed.cap, side:committed.side, stat_type:'exclusion', vsCap:a1.cap, vsId:a1.playerId}];
+        const note = buildDriveNote(t, base, a1); if(note) events.push(note);
+        return events;
       }
       return [{...base, playerId:a1.playerId, playerCap:a1.cap, side:a1.side, stat_type:'exclusion'}];
     } },
@@ -4785,10 +4816,36 @@ function handleParsedPhrase(rawText){ const game=findGame(app.selectedGameId); i
     if(ev.stat_type==='unmatched') ev.unmatched=true;
   }); saveState(); renderGame(); }
 
+// Recognition engines (Safari's in particular) restart the listening session far more often than
+// Chrome's does, and a restart landing mid-utterance commonly re-transcribes the tail end of what
+// was just said as its own new "final" result. Blindly appending every final result to the buffer
+// turned that into a garbled run-on — "dark two stole the ball from light two" showing up twice,
+// once mangled, concatenated into one nonsense phrase. If the new chunk overlaps what's already
+// buffered, treat it as a re-transcription of the same utterance (keep whichever version is
+// longer/more complete) instead of gluing both onto the end.
+function isOverlappingRetranscription(buffer, chunk){
+  const a = buffer.toLowerCase().trim(), b = chunk.toLowerCase().trim();
+  if(!a || !b) return false;
+  if(a.includes(b) || b.includes(a)) return true;
+  // A re-transcription of the same audio rarely comes back byte-identical (mic noise, a mis-heard
+  // word here or there) — "...from night to" vs "...from light two" — so also check word-level
+  // overlap: if most of the shorter phrase's words also appear in the longer one, it's almost
+  // certainly the same utterance heard twice, not two different things that happen to share words.
+  const wordsA = a.split(/\s+/).filter(Boolean), wordsB = b.split(/\s+/).filter(Boolean);
+  const [shorter, longer] = wordsA.length <= wordsB.length ? [wordsA, wordsB] : [wordsB, wordsA];
+  if(shorter.length < 3) return false; // too short for word-overlap to be a reliable signal
+  const longerCounts = {}; longer.forEach(w=>{ longerCounts[w] = (longerCounts[w]||0)+1; });
+  let matched = 0;
+  shorter.forEach(w=>{ if(longerCounts[w] > 0){ matched++; longerCounts[w]--; } });
+  return (matched / shorter.length) >= 0.7;
+}
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 function setupRecognition(){ if(!SR){ document.getElementById('micBtn').disabled=true; document.getElementById('micStatus').textContent='Voice unsupported'; return; }
   app.recognition = new SR(); app.recognition.continuous=true; app.recognition.interimResults=true; app.recognition.lang='en-US';
-  app.recognition.onresult = (event)=>{ let interim=''; for(let i=event.resultIndex;i<event.results.length;i++){ const res=event.results[i]; if(res.isFinal){ const t=res[0].transcript.trim(); if(!t) continue; if(/\b(undo|scratch that)\b/i.test(t)){ flushBuffer(); handleParsedPhrase(t); continue; } app.pendingBuffer=(app.pendingBuffer+' '+t).trim(); clearTimeout(app.pendingTimer); app.pendingTimer=setTimeout(flushBuffer, 1300); } else { interim += res[0].transcript; } } if(interim){ document.getElementById('micStatus').textContent = app.pendingBuffer ? `…${app.pendingBuffer} ${interim}` : interim; } };
+  app.recognition.onresult = (event)=>{ let interim=''; for(let i=event.resultIndex;i<event.results.length;i++){ const res=event.results[i]; if(res.isFinal){ const t=res[0].transcript.trim(); if(!t) continue; if(/\b(undo|scratch that)\b/i.test(t)){ flushBuffer(); handleParsedPhrase(t); continue; }
+      if(isOverlappingRetranscription(app.pendingBuffer, t)){ if(t.length > app.pendingBuffer.length) app.pendingBuffer = t; }
+      else { app.pendingBuffer=(app.pendingBuffer+' '+t).trim(); }
+      clearTimeout(app.pendingTimer); app.pendingTimer=setTimeout(flushBuffer, 1300); } else { interim += res[0].transcript; } } if(interim){ document.getElementById('micStatus').textContent = app.pendingBuffer ? `…${app.pendingBuffer} ${interim}` : interim; } };
   app.recognition.onerror = (e)=>{ if(e.error==='not-allowed' || e.error==='service-not-allowed'){ toggleMic(false); document.getElementById('micStatus').textContent='Mic permission blocked'; return; } if(e.error==='no-speech') return; document.getElementById('micStatus').textContent = 'Mic issue: '+e.error; };
   app.recognition.onend = ()=>{ if(!app.listening) return; setTimeout(()=>{ if(app.listening){ try{ app.recognition.start(); }catch(e){} } }, 350); };
 }
@@ -4838,7 +4895,16 @@ async function openClockSync(){
   document.getElementById('clockSyncStatus').textContent = 'Starting camera…';
   document.getElementById('clockSyncReading').textContent = '--:--';
   try{
-    clockSyncStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} }, audio:false });
+    // A MacBook only has a front camera — there's no "environment-facing" one to satisfy. Chrome's
+    // constraint solver treats `ideal` as a soft hint and quietly falls back to whatever camera
+    // exists; Safari's has been the pickier of the two here and can reject the whole request outright
+    // instead of relaxing it. Retry with a bare `{video:true}` (any camera, no facing preference) so
+    // a laptop's single built-in camera still works even where the ideal hint gets refused.
+    try{
+      clockSyncStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} }, audio:false });
+    }catch(innerErr){
+      clockSyncStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+    }
     const video = document.getElementById('clockSyncVideo');
     video.srcObject = clockSyncStream;
     await video.play();
