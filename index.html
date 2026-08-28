@@ -850,7 +850,7 @@
         <div class="panel" style="margin-top:18px;">
           <div class="data-row">
             <h2>Season &amp; lifetime stats</h2>
-            <span style="font-size:11px;color:var(--text-faint);">Sh/Sh% shown where the source data tracked shot attempts — a couple of older seasons don't have it.</span>
+            <span style="font-size:11px;color:var(--text-faint);">Sh/Sh% is a 2026-and-forward stat — 2024/2025 are imported final scores with no shot-by-shot data behind them.</span>
           </div>
           <div class="table-wrap">
             <table class="stats" id="playerSeasonStatsTable"></table>
@@ -3792,7 +3792,7 @@ function renderPlayer(){ const player = findPlayer(app.selectedPlayerId); if(!pl
     <div class="stat-card"><h3>Saves</h3><div class="value">${lt.sv||0}</div></div>
   `;
   const summaryCaption = document.getElementById('playerSummaryCaption');
-  if(summaryCaption) summaryCaption.textContent = 'Shots/Sh% only count games where shot attempts were actually tracked live — Goals is the full lifetime total, so the two can look mismatched (e.g. real goals from an untracked season vs. shots from a different, tracked one).';
+  if(summaryCaption) summaryCaption.textContent = 'Shots/Sh% only count 2026-and-forward games — Goals is the full lifetime total including 2024/2025, so the two can look mismatched at a glance.';
   const seasonTable = document.getElementById('playerSeasonStatsTable');
   if(seasonTable){
     if(seasonStats.seasons.length===0){
@@ -3861,8 +3861,9 @@ function buildPlayerNoteTally(player, recentGames){
 
 // Season-by-season and lifetime totals for a player, merging their own live-tracked games with every
 // historical box score (any logged opponent, any season) that matches their name. Shots/Sh% and
-// sprints-won are only ever tracked live (6-8sports box scores don't carry a per-player shot-attempt
-// count), so those columns read "—" for historical-only seasons rather than a misleading 0.
+// sprints-won are treated as a 2026-and-forward stat — no 2024/2025 game, imported or otherwise, has
+// real shot-by-shot data behind it — so those columns read "—" for every earlier season rather than a
+// misleading 0 or an inconsistent partial number.
 function blankSeasonRow(year){ return { year, gpSet:new Set(), g:0, gWithShotData:0, a:0, sh:0, hasShotData:false, exd:0, exg:0, stl:0, to:0, blk:0, sv:0, pd:0 }; }
 function buildPlayerSeasonStats(player){
   const seasons = {};
@@ -3873,12 +3874,12 @@ function buildPlayerSeasonStats(player){
     const year = (game.date||'').slice(0,4) || 'Unknown';
     const s = ensureYear(year);
     s.gpSet.add(game.id);
-    // Real box-score imports (SEED_CAL_PLAYBYPLAY / SEED_SCHOOL_PLAYBYPLAY) only ever carry goal
-    // events, never shot attempts — 6-8sports and school box scores don't track a per-player miss
-    // count. Only flip hasShotData for a game that actually logged a shot_attempt for this player
-    // (i.e. a live-tracked game), same rule HISTORICAL_MATCHUPS already follows below — otherwise a
-    // season stitched from goal-only imports would show a >100% shooting percentage.
-    const shotCount = events.filter(ev=>ev.stat_type==='shot_attempt').length;
+    // Shots/Sh% are a 2026-and-forward stat, full stop — every 2024/2025 game on record is an
+    // imported final score (no shot-by-shot data ever existed for it, even the rare one with a
+    // stray shot_attempt logged), while 2026 is the first season actually being tracked live through
+    // the app. Gating on year instead of "did this specific game happen to log a shot" keeps the
+    // rule simple and predictable instead of a coin-flip per game.
+    const shotCount = year>='2026' ? events.filter(ev=>ev.stat_type==='shot_attempt').length : 0;
     if(shotCount>0) s.hasShotData = true;
     STAT_DEFS.forEach(def=>{
       const count = events.filter(ev=>ev.stat_type===def.key).length; if(!count) return;
@@ -3908,7 +3909,10 @@ function buildPlayerSeasonStats(player){
             matched = true;
             const s = ensureYear(year);
             s.g += p.g||0; s.a += p.a||0; s.exd += p.exD||0; s.exg += p.exG||0; s.sv += p.sv||0;
-            if(p.sh!=null){ s.sh += p.sh; s.gWithShotData += p.g||0; s.hasShotData = true; }
+            // Same 2026-and-forward rule as above — HISTORICAL_MATCHUPS is entirely 2023-2025 data,
+            // so this branch in practice never sets hasShotData, but the check stays explicit rather
+            // than relying on "this dataset happens to predate 2026" as an unstated assumption.
+            if(p.sh!=null && year>='2026'){ s.sh += p.sh; s.gWithShotData += p.g||0; s.hasShotData = true; }
           });
         });
         if(!matched) return;
