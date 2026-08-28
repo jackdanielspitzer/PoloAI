@@ -407,10 +407,7 @@
     <div class="modal-panel" style="max-width:480px;">
       <div class="modal-header">
         <h3>Sync clock from camera</h3>
-        <div style="display:flex;gap:6px;">
-          <button class="ghost-btn" type="button" onclick="minimizeClockSync()" title="Keep tracking in the background while you manage the rest of the game">Keep syncing in background</button>
-          <button class="ghost-btn" type="button" onclick="closeClockSync()" title="Stop the camera entirely">✕</button>
-        </div>
+        <button class="ghost-btn" type="button" onclick="closeClockSync()" title="Stop the camera entirely">✕</button>
       </div>
       <div class="form-row full">
         <div>
@@ -4989,7 +4986,6 @@ let clockSyncBox = null; // {x,y,w,h} in the video's native pixel coordinates
 let clockSyncDigitCount = 3;
 let clockSyncPeriodMs = 8*60*1000;
 let clockSyncInterval = null;
-let clockSyncHistory = []; // recent {ms,t} readings, for requiring a few consistent frames before trusting one
 let clockSyncDrawStart = null;
 let clockSyncLastAppliedMs = null; // avoid re-pulling/pushing on every tick once a reading has already been applied
 let clockSyncLastSyncFlashAt = 0; // when the "✓ Synced" confirmation last showed — briefly holds that message, then lets live digit feedback resume
@@ -5011,7 +5007,7 @@ async function openClockSync(){
   const game = findGame(app.selectedGameId);
   if(!game || !hasManagePermission(game)){ alert('You do not have permission to manage this game.'); return; }
   const m = document.getElementById('clockSyncModal'); m.style.display='flex'; m.classList.remove('hidden'); m.classList.remove('minimized'); m.onclick = null;
-  clockSyncBox = null; clockSyncHistory = []; clockSyncLastAppliedMs = null; clockSyncPulledThisSession = false; clockSyncLastSyncFlashAt = 0;
+  clockSyncBox = null; clockSyncLastAppliedMs = null; clockSyncPulledThisSession = false; clockSyncLastSyncFlashAt = 0;
   document.getElementById('clockSyncStatus').textContent = 'Starting camera…';
   document.getElementById('clockSyncReading').textContent = '--:--';
   try{
@@ -5156,6 +5152,10 @@ function beginClockSyncReading(){
   if(statusEl) statusEl.textContent = 'Reading… hold steady on the clock.';
   if(clockSyncDisplayType === 'ocr') beginClockSyncReadingOCR();
   else beginClockSyncReadingSegment();
+  // No separate "keep syncing" step to click — reading straight off the camera and applying it to
+  // the game clock is just what this does now. A couple of seconds here to actually see it read
+  // correctly, then it shrinks itself out of the way on its own and keeps going in the background.
+  setTimeout(()=>{ if(isClockSyncActive() && !isClockSyncMinimized()) minimizeClockSync(); }, 2500);
 }
 // Loads the OCR engine lazily — most coaches will use the classic segment reader and never need
 // this heavier download at all. Cached on window.Tesseract once loaded so re-opening the modal
@@ -5226,16 +5226,11 @@ function beginClockSyncReadingOCR(){
       const ms = (minutes*60+seconds)*1000;
       const readingEl = document.getElementById('clockSyncReading');
       if(readingEl) readingEl.textContent = fmtClockMs(ms);
-      const now = Date.now();
-      clockSyncHistory.push({ms, t:now});
-      // OCR runs far less often than the segment reader, so the "recent readings" window needs to
-      // be wider to still catch a couple of consistent samples before trusting one — wider still
-      // once minimized, where each pass lands roughly 5s apart instead of 1.2s.
-      const windowMs = isClockSyncMinimized() ? 16000 : 4000;
-      clockSyncHistory = clockSyncHistory.filter(h=>now-h.t < windowMs);
-      if(clockSyncHistory.length>=2 && clockSyncHistory.slice(-2).every(h=>h.ms===clockSyncHistory[clockSyncHistory.length-2].ms)){
-        applyClockSyncReading(ms);
-      }
+      // A running clock changes every second — requiring several consecutive OCR passes to agree
+      // fights against that. A clean MM:SS-shaped match above is already the bar for trusting a
+      // reading; apply it immediately, same as the segment reader. applyClockSyncReading no-ops on
+      // its own once the value repeats, so a steady clock between ticks costs nothing extra.
+      applyClockSyncReading(ms);
     }catch(e){
       console.warn('OCR read failed:', e);
       const statusEl = document.getElementById('clockSyncStatus');
@@ -5302,19 +5297,13 @@ function beginClockSyncReadingSegment(){
     const ms = (minutes*60+seconds)*1000;
     const readingEl = document.getElementById('clockSyncReading');
     if(readingEl) readingEl.textContent = fmtClockMs(ms);
-    const now = Date.now();
-    clockSyncHistory.push({ms, t:now});
-    // Minimized ticks land roughly a second apart instead of every 200ms — the stability window and
-    // how many matching samples are required both need to widen to match, or a throttled background
-    // loop would never gather enough samples fast enough to ever trust a reading again.
-    const minimized = isClockSyncMinimized();
-    const windowMs = minimized ? 6000 : 1500, requiredSamples = minimized ? 2 : 4;
-    clockSyncHistory = clockSyncHistory.filter(h=>now-h.t < windowMs);
-    // Require the same value across the last several samples before trusting it — a single noisy
-    // frame (motion blur, glare, a hand passing in front) never gets applied on its own.
-    if(clockSyncHistory.length>=requiredSamples && clockSyncHistory.slice(-requiredSamples).every(h=>h.ms===clockSyncHistory[clockSyncHistory.length-requiredSamples].ms)){
-      applyClockSyncReading(ms);
-    }
+    // A running clock is SUPPOSED to change every second — requiring several consecutive samples
+    // to all read the exact same value fights against the thing being read. Every digit position
+    // decoded cleanly above (no ✗s) is already the real bar for trusting a reading; applying it
+    // immediately, every time it changes, is what "just use the time it's already reading" means.
+    // applyClockSyncReading no-ops on its own once the value repeats, so this costs nothing extra
+    // once the clock holds steady between ticks.
+    applyClockSyncReading(ms);
   }, 200);
 }
 let clockSyncApplying = false, clockSyncPulledThisSession = false, clockSyncPendingMs = null;
