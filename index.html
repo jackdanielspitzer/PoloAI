@@ -1334,7 +1334,18 @@ async function pullSharedStateFromServer(applyIfNewer){
     // missing after a pull, that's what the normal page-load seeding (loadState) is for — this stays
     // a pure "take what the server has" sync, nothing more.
     _syncState.lastPulledAt = serverTime;
-    if(changed){ localStorage.setItem('poloai-app-state', JSON.stringify(app)); _syncState.lastPushedAt = serverTime; checkGameStateNotifications(app.games); renderAll(); }
+    if(changed){
+      localStorage.setItem('poloai-app-state', JSON.stringify(app)); _syncState.lastPushedAt = serverTime; checkGameStateNotifications(app.games);
+      // A background sync landing mid-tap is exactly what made buttons "stop working": renderAll()
+      // tears down and rebuilds the current page's DOM, and a real touch/click has just enough
+      // latency between finger-down and the click event firing that it can land on a node that got
+      // replaced out from under it a moment earlier — worst of all inside an open setup modal, where
+      // losing the in-progress dropdown/selection reads as "the buttons are broken." If a modal is
+      // open right now, skip the rebuild for this cycle — the merged data is already saved above, so
+      // nothing is lost, and the very next poll (or the modal closing) picks the render back up.
+      const modalOpen = document.querySelector('.modal-overlay:not(.hidden)');
+      if(!modalOpen) renderAll();
+    }
   }catch(e){ _syncState.backendAvailable = false; console.warn('shared-state pull failed:', e); }
   finally{ _syncState.pulling = false; }
 }
