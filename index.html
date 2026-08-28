@@ -3565,10 +3565,12 @@ function renderGame(){ const game = findGame(app.selectedGameId); if(!game){ nav
   // only show controls if in manage mode AND current user has permission
   const controlsVisible = (app.manageMode && hasManagePermission(game));
   document.getElementById('gameControlsPanel').style.display = controlsVisible ? 'block' : 'none';
-  // show a viewer/read-only badge when the user cannot manage
+  // show a viewer/read-only badge when the user cannot manage — spelling out WHY rather than just
+  // silently falling back to view mode, since "Edit mode did nothing" is otherwise indistinguishable
+  // from a real bug when it's actually a role/team mismatch on the account.
   let notice = document.getElementById('gameViewerNotice');
   if(!notice){ notice = document.createElement('span'); notice.id='gameViewerNotice'; notice.className='pill'; document.getElementById('gameHeading').insertAdjacentElement('afterend', notice); }
-  if(!controlsVisible){ notice.style.display='inline-flex'; notice.textContent = 'Viewer — read-only'; } else { notice.style.display='none'; }
+  if(!controlsVisible){ notice.style.display='inline-flex'; notice.textContent = explainManagePermission(game); } else { notice.style.display='none'; }
   // if entering manage mode and controls visible, ensure user picks which side to track
   if(controlsVisible){ if(!app.statFor || app.statFor.gameId !== game.id || !game.ourColor){ showStatForModal(game); } }
   renderGameRoster(game);
@@ -3588,6 +3590,21 @@ function hasManagePermission(game){ const u=currentUser(); if(!u) return false; 
   if(u.role==='manager'){ return u.teamId ? (u.teamId===game.teamId) : true; }
   if(u.role==='coach'){ return u.teamId===game.teamId; }
   return false; }
+// Spells out the specific reason Edit mode isn't actually unlocking anything — not logged in, wrong
+// role, or logged in with the right role but assigned to (or not assigned to) a different team than
+// this game's — so it reads as an account setting to fix rather than a broken button.
+function explainManagePermission(game){
+  const u = currentUser();
+  if(!u) return 'Viewer — read-only. Log in to manage a game.';
+  if(u.role!=='statistician' && u.role!=='manager' && u.role!=='coach'){
+    return `Viewer — read-only. Your account role (${u.role}) can't manage games — a coach or manager can change this in My account.`;
+  }
+  const team = findTeam(game.teamId);
+  if((u.role==='coach' || u.role==='manager') && u.teamId && u.teamId!==game.teamId){
+    return `Viewer — read-only. Your account is assigned to a different team than ${team ? team.name : 'this game'} — update your team in My account to manage it.`;
+  }
+  return 'Viewer — read-only';
+}
 
 function showStatForModal(game){ const m=document.getElementById('statForModal'); m.style.display='flex'; m.classList.remove('hidden');
   const darkBtn=document.getElementById('colorDarkBtn'), lightBtn=document.getElementById('colorLightBtn');
@@ -3898,14 +3915,36 @@ function buildPlayerSeasonStats(player){
   }, {});
   return { seasons: seasonList, lifetime };
 }
+// Cap #1 (current, real, pulled from each school's own athletics site) for opponents that show up
+// often enough in the event log to be worth sourcing individually but don't have a full roster in
+// CURRENT_ROSTERS — every spelling/abbreviation actually used as an `opponent` string anywhere in the
+// app is listed so substring matching in findOpponentCap1Name doesn't have to guess at acronyms.
+const SCHOOL_CAP1_LOOKUP = {
+  'air force': 'Jay Pyle',
+  'uc santa barbara': 'Wyatt Pieretti', 'ucsb': 'Wyatt Pieretti',
+  'lmu': 'Pablo De Souza',
+  'uc san diego': 'Alex Hegeman', 'ucsd': 'Alex Hegeman',
+  'uc irvine': 'Nico Assalian', 'uci': 'Nico Assalian',
+  'santa clara': 'Harrison Labrosse',
+  'long beach state': 'William Whitstone', 'long beach st.': 'William Whitstone',
+  'redlands': 'Troy Barker', 'university of redlands': 'Troy Barker',
+  'uc merced': 'Matthew Lloyd',
+  'george washington': 'Solt Horvath',
+  'johns hopkins': 'Chris Poisler',
+  'harvard': 'Oliver Price',
+  'navy': 'Oren Penning',
+  'bucknell': 'David Dumitru',
+  'salem': 'Jelle van Rossum', 'salem university': 'Jelle van Rossum',
+  'cal state fullerton': 'Cy Hammerstrom', 'csu fullerton': 'Cy Hammerstrom', 'cal state fullerton (m)': 'Cy Hammerstrom',
+};
 // When a goal's goalie wasn't captured (no Save event logged yet for that team when the goal happened),
 // assume it was the starting/primary goalie — cap '1' specifically, not a backup like '1A'/'1B' — looked
 // up from the opposing side's roster for that exact game.
 // Same "assume the starting goalie, cap #1" fallback as findDefaultGoalie, but for spots that don't
-// have a per-game boxScore to check — instead looks up the opponent's actual current roster (the only
-// roster data most opponents have on record) and returns the real name wearing cap 1, e.g. "Riley
-// Clansen" instead of the bare digit. Only Cal and Stanford have a roster on file, so this comes up
-// empty for every other opponent — there's nothing to look up yet, not a bug.
+// have a per-game boxScore to check — instead looks up the opponent's actual current roster and
+// returns the real name wearing cap 1, e.g. "Riley Clansen" instead of the bare digit. Checks the full
+// CURRENT_ROSTERS teams first, then the smaller SCHOOL_CAP1_LOOKUP sourced just for this purpose;
+// anything not in either really doesn't have a roster on file yet, not a bug.
 function findOpponentCap1Name(opponentName){
   const nameLower = (opponentName||'').trim().toLowerCase();
   if(!nameLower) return null;
@@ -3913,9 +3952,9 @@ function findOpponentCap1Name(opponentName){
     const label = CURRENT_ROSTERS[k].label.replace(/\s*\(\d{4}\)\s*$/,'').toLowerCase();
     return label===nameLower || nameLower.includes(label) || label.includes(nameLower);
   });
-  if(!key) return null;
-  const p = CURRENT_ROSTERS[key].players.find(pl=>String(pl.cap)==='1');
-  return p ? p.name : null;
+  if(key){ const p = CURRENT_ROSTERS[key].players.find(pl=>String(pl.cap)==='1'); if(p) return p.name; }
+  const lookupKey = Object.keys(SCHOOL_CAP1_LOOKUP).find(k=>k===nameLower || nameLower.includes(k) || k.includes(nameLower));
+  return lookupKey ? SCHOOL_CAP1_LOOKUP[lookupKey] : null;
 }
 function findDefaultGoalie(box, scorerNameLower){
   let ourSide = null;
