@@ -5010,7 +5010,7 @@ async function openClockSync(){
   const game = findGame(app.selectedGameId);
   if(!game || !hasManagePermission(game)){ alert('You do not have permission to manage this game.'); return; }
   const m = document.getElementById('clockSyncModal'); m.style.display='flex'; m.classList.remove('hidden'); m.classList.remove('minimized'); m.onclick = null;
-  clockSyncBox = null; clockSyncHistory = []; clockSyncLastAppliedMs = null;
+  clockSyncBox = null; clockSyncHistory = []; clockSyncLastAppliedMs = null; clockSyncPulledThisSession = false;
   document.getElementById('clockSyncStatus').textContent = 'Starting camera…';
   document.getElementById('clockSyncReading').textContent = '--:--';
   try{
@@ -5189,8 +5189,9 @@ function beginClockSyncReadingOCR(){
   const video = document.getElementById('clockSyncVideo');
   const work = document.createElement('canvas');
   const wctx = work.getContext('2d', {willReadFrequently:true});
-  let busy = false;
+  let busy = false, tick = 0;
   clockSyncOcrInterval = setInterval(async ()=>{
+    tick++; if(isClockSyncMinimized() && tick % 4 !== 0) return; // ~1.2s live, ~4.8s minimized — a real OCR inference each pass is much heavier than a pixel sample, so it throttles harder in the background
     if(busy || !clockSyncBox || !video.videoWidth) return;
     busy = true;
     try{
@@ -5222,9 +5223,11 @@ function beginClockSyncReadingOCR(){
       const now = Date.now();
       clockSyncHistory.push({ms, t:now});
       // OCR runs far less often than the segment reader, so the "recent readings" window needs to
-      // be wider to still catch a couple of consistent samples before trusting one.
-      clockSyncHistory = clockSyncHistory.filter(h=>now-h.t < 4000);
-      if(clockSyncHistory.length>=2 && clockSyncHistory.every(h=>h.ms===clockSyncHistory[0].ms)){
+      // be wider to still catch a couple of consistent samples before trusting one — wider still
+      // once minimized, where each pass lands roughly 5s apart instead of 1.2s.
+      const windowMs = isClockSyncMinimized() ? 16000 : 4000;
+      clockSyncHistory = clockSyncHistory.filter(h=>now-h.t < windowMs);
+      if(clockSyncHistory.length>=2 && clockSyncHistory.slice(-2).every(h=>h.ms===clockSyncHistory[clockSyncHistory.length-2].ms)){
         applyClockSyncReading(ms);
       }
     }catch(e){
@@ -5235,11 +5238,20 @@ function beginClockSyncReadingOCR(){
     }finally{ busy = false; }
   }, 1200);
 }
+// Full-speed reading only earns its keep while someone's actively watching the calibration —
+// sub-second precision doesn't matter for a background loop whose whole job is periodic drift
+// correction over the course of an hour-plus game, and running it at full speed the entire time
+// (continuous video decode + this + speech recognition, all at once) is real, sustained load that
+// can push a long game session into a crash. Once minimized, this skips most ticks — the interval
+// itself stays cheap to check, only the real (canvas/pixel) work gets throttled.
+function isClockSyncMinimized(){ const m = document.getElementById('clockSyncModal'); return !!(m && m.classList.contains('minimized')); }
 function beginClockSyncReadingSegment(){
   const video = document.getElementById('clockSyncVideo');
   const work = document.createElement('canvas');
   const wctx = work.getContext('2d', {willReadFrequently:true});
+  let tick = 0;
   clockSyncInterval = setInterval(()=>{
+    tick++; if(isClockSyncMinimized() && tick % 5 !== 0) return; // ~200ms live, ~1s minimized
     if(!clockSyncBox || !video.videoWidth) return;
     work.width = video.videoWidth; work.height = video.videoHeight;
     wctx.drawImage(video, 0, 0, work.width, work.height);
@@ -5283,37 +5295,56 @@ function beginClockSyncReadingSegment(){
     if(readingEl) readingEl.textContent = fmtClockMs(ms);
     const now = Date.now();
     clockSyncHistory.push({ms, t:now});
-    clockSyncHistory = clockSyncHistory.filter(h=>now-h.t < 1500);
+    // Minimized ticks land roughly a second apart instead of every 200ms — the stability window and
+    // how many matching samples are required both need to widen to match, or a throttled background
+    // loop would never gather enough samples fast enough to ever trust a reading again.
+    const minimized = isClockSyncMinimized();
+    const windowMs = minimized ? 6000 : 1500, requiredSamples = minimized ? 2 : 4;
+    clockSyncHistory = clockSyncHistory.filter(h=>now-h.t < windowMs);
     // Require the same value across the last several samples before trusting it — a single noisy
     // frame (motion blur, glare, a hand passing in front) never gets applied on its own.
-    if(clockSyncHistory.length>=4 && clockSyncHistory.every(h=>h.ms===clockSyncHistory[0].ms)){
+    if(clockSyncHistory.length>=requiredSamples && clockSyncHistory.slice(-requiredSamples).every(h=>h.ms===clockSyncHistory[clockSyncHistory.length-requiredSamples].ms)){
       applyClockSyncReading(ms);
     }
   }, 200);
 }
+let clockSyncApplying = false, clockSyncPulledThisSession = false, clockSyncPendingMs = null;
 async function applyClockSyncReading(remainingMs){
   if(remainingMs === clockSyncLastAppliedMs) return; // clock hasn't moved since our last sync — nothing to do
+  // A running background sync confirms a new reading roughly once a second (the real clock just
+  // ticks over naturally) — this used to pull the ENTIRE shared backend (megabytes, 100+ requests)
+  // fresh on every single one of those. Left running for a whole game, that piled up dozens of
+  // slow overlapping pulls that raced each other: a slow one finishing late would overwrite a
+  // correct, fresher reading with its own stale one, which is exactly "says synced, then drifts
+  // back to its own time" — the sync WAS applying, just getting silently clobbered a moment later.
+  // Pulling once per session (not once per reading) keeps the original safety intent — don't write
+  // from a copy that predates another device's edits — without re-fetching everything every second.
   if(!findGame(app.selectedGameId)) return;
-  // This is very likely a SEPARATE device from whoever's actively logging stats (that's the whole
-  // point — phone on the clock, laptop on the keyboard/mic) — and this app's shared state is a
-  // full-array push, not a per-field patch, so writing from a stale local copy could silently wipe
-  // out events the other device logged and hasn't pulled down here yet. Pulling fresh immediately
-  // before writing keeps that staleness window as small as possible.
-  await pullSharedStateFromServer(false);
-  const game = findGame(app.selectedGameId); if(!game) return;
-  if(!game.quarterStart) game.quarterStart = {};
-  if(!game.periodLengthMsByPeriod) game.periodLengthMsByPeriod = {};
-  const elapsedMs = clockSyncPeriodMs - remainingMs;
-  game.quarterStart[app.currentQ] = Date.now() - Math.max(0, elapsedMs);
-  // Remember the period length this reading was taken against so the game log can convert
-  // elapsed-since-start back into the actual scoreboard reading later, even after this camera
-  // session ends — per-period, since an overtime period often runs shorter than regulation.
-  game.periodLengthMsByPeriod[app.currentQ] = clockSyncPeriodMs;
-  game.periodLengthMs = game.periodLengthMs || clockSyncPeriodMs;
-  clockSyncLastAppliedMs = remainingMs;
-  saveState();
-  const statusEl = document.getElementById('clockSyncStatus');
-  if(statusEl) statusEl.innerHTML = `<span style="color:var(--good);">✓ Synced</span> — ${periodLabel(app.currentQ)} set to ${fmtClockMs(remainingMs)} remaining.`;
+  if(clockSyncApplying){ clockSyncPendingMs = remainingMs; return; } // a previous reading is still being applied — remember this one rather than dropping it, and catch up once that finishes
+  clockSyncApplying = true;
+  try{
+    if(!clockSyncPulledThisSession){ await pullSharedStateFromServer(false); clockSyncPulledThisSession = true; }
+    const game = findGame(app.selectedGameId); if(!game) return;
+    if(!game.quarterStart) game.quarterStart = {};
+    if(!game.periodLengthMsByPeriod) game.periodLengthMsByPeriod = {};
+    const elapsedMs = clockSyncPeriodMs - remainingMs;
+    game.quarterStart[app.currentQ] = Date.now() - Math.max(0, elapsedMs);
+    // Remember the period length this reading was taken against so the game log can convert
+    // elapsed-since-start back into the actual scoreboard reading later, even after this camera
+    // session ends — per-period, since an overtime period often runs shorter than regulation.
+    game.periodLengthMsByPeriod[app.currentQ] = clockSyncPeriodMs;
+    game.periodLengthMs = game.periodLengthMs || clockSyncPeriodMs;
+    clockSyncLastAppliedMs = remainingMs;
+    saveState();
+    const statusEl = document.getElementById('clockSyncStatus');
+    if(statusEl) statusEl.innerHTML = `<span style="color:var(--good);">✓ Synced</span> — ${periodLabel(app.currentQ)} set to ${fmtClockMs(remainingMs)} remaining.`;
+  } finally {
+    clockSyncApplying = false;
+    // Something newer came in while this one was busy (only realistically possible during the
+    // one-time pull above) — apply it now instead of leaving the clock stuck on a reading that's
+    // already out of date the moment this function returns.
+    if(clockSyncPendingMs !== null){ const pending = clockSyncPendingMs; clockSyncPendingMs = null; applyClockSyncReading(pending); }
+  }
 }
 
 function addManualEvent(){ const game=findGame(app.selectedGameId); if(!game) return; const playerId=document.getElementById('manualPlayerSelect').value; const stat=document.getElementById('manualStatSelect').value; const side=document.getElementById('manualSideSelect')?document.getElementById('manualSideSelect').value:'team'; const oppCapInput=document.getElementById('manualOppCap')?document.getElementById('manualOppCap').value.trim():'';
