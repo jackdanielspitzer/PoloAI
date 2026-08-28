@@ -397,7 +397,10 @@
     <div class="modal-panel" style="max-width:480px;">
       <div class="modal-header">
         <h3>Sync clock from camera</h3>
-        <button class="ghost-btn" type="button" onclick="closeClockSync()">✕</button>
+        <div style="display:flex;gap:6px;">
+          <button class="ghost-btn" type="button" onclick="minimizeClockSync()" title="Keep tracking in the background while you manage the rest of the game">Keep syncing in background</button>
+          <button class="ghost-btn" type="button" onclick="closeClockSync()" title="Stop the camera entirely">✕</button>
+        </div>
       </div>
       <div class="form-row full">
         <div>
@@ -1773,6 +1776,11 @@ function renderAccount(){
 
 
 function navigate(page, id = null, meta = {}){
+  // A backgrounded clock sync keeps writing camera readings straight onto app.selectedGameId — if
+  // that were left running while leaving this game entirely, or switching to a DIFFERENT game, it
+  // would silently start stamping another game's clock with the wrong scoreboard's readings. Stop
+  // it here, before selectedGameId changes, same as stopListening() already does for voice.
+  if(isClockSyncActive() && (page!=='game' || (id && id!==app.selectedGameId))) closeClockSync();
   app.page = page;
   if(page==='team'){ app.selectedTeamId = id || app.selectedTeamId; }
   if(page==='games'){ if(id) app.selectedTeamId = id; }
@@ -3848,7 +3856,21 @@ function renderGame(){ const game = findGame(app.selectedGameId); if(!game){ nav
   renderManualSelectors(game);
   document.getElementById('micStatus').textContent = app.listening ? `Listening ${periodLabel(app.currentQ)}` : 'Mic off';
   const clockSyncBtn = document.getElementById('clockSyncBtn');
-  if(clockSyncBtn) clockSyncBtn.style.display = isClockedPeriod(app.currentQ) ? '' : 'none';
+  if(clockSyncBtn){
+    clockSyncBtn.style.display = isClockedPeriod(app.currentQ) ? '' : 'none';
+    // A background sync keeps reading after the modal's minimized — this pill is the only visible
+    // sign of that, so it has to say so clearly and get back to the camera view in one tap, rather
+    // than looking identical to "sync isn't running at all."
+    if(isClockSyncActive()){
+      clockSyncBtn.textContent = '📷 Syncing live — tap to view';
+      clockSyncBtn.classList.add('primary-btn'); clockSyncBtn.classList.remove('ghost-btn');
+      clockSyncBtn.onclick = reopenClockSync;
+    } else {
+      clockSyncBtn.textContent = '📷 Sync clock from camera';
+      clockSyncBtn.classList.add('ghost-btn'); clockSyncBtn.classList.remove('primary-btn');
+      clockSyncBtn.onclick = openClockSync;
+    }
+  }
 }
 
 function hasManagePermission(game){ const u=currentUser(); if(!u) return false; // only manager, coach, or statistician can manage stats
@@ -5039,7 +5061,23 @@ function closeClockSync(){
   if(clockSyncOcrInterval){ clearInterval(clockSyncOcrInterval); clockSyncOcrInterval=null; }
   if(clockSyncStream){ clockSyncStream.getTracks().forEach(t=>t.stop()); clockSyncStream=null; }
   const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='none'; m.classList.add('hidden'); }
+  renderGame();
 }
+// A real water polo clock stops constantly — fouls, timeouts, between quarters — so a single
+// snapshot reading drifts out of sync within seconds of the next stoppage. Reading only happens
+// while this modal is visibly open, which used to mean "close it once synced" (the natural thing
+// to do) silently stopped all further correction. This keeps the camera stream and the read loop
+// running after the modal is hidden — only closeClockSync() (the ✕) actually stops the camera —
+// so the game clock keeps tracking the real one continuously instead of just extrapolating forward
+// from one point-in-time reading.
+function minimizeClockSync(){
+  const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='none'; m.classList.add('hidden'); }
+  renderGame();
+}
+function reopenClockSync(){
+  const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='flex'; m.classList.remove('hidden'); }
+}
+function isClockSyncActive(){ return !!(clockSyncInterval || clockSyncOcrInterval); }
 // Switching between a real segmented display and a video-board/TV rendering needs a completely
 // different read strategy (see beginClockSyncReading below) — the digit-count field only means
 // anything for the segment method, so it's hidden for the OCR path.
