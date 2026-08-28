@@ -106,6 +106,16 @@
 
   /* Modal user form */
   .modal-overlay{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:linear-gradient(rgba(2,6,8,.45), rgba(2,6,8,.45)); z-index:80;}
+  /* A "minimized" camera sync can't just be display:none — browsers stop decoding new frames from a
+     hidden/off-screen <video>, so a truly hidden feed silently freezes on its last frame instead of
+     continuing to read the real clock. Keeping it small but genuinely rendered avoids that. */
+  #clockSyncModal.minimized{position:fixed; inset:auto; bottom:16px; right:16px; width:150px; background:none; align-items:flex-start; justify-content:flex-start; z-index:90; cursor:pointer;}
+  #clockSyncModal.minimized .modal-panel{width:150px; max-width:150px; padding:6px; border-radius:10px; box-shadow:0 6px 24px rgba(0,0,0,.5);}
+  #clockSyncModal.minimized .modal-header, #clockSyncModal.minimized .form-row, #clockSyncModal.minimized #clockSyncCameraRow,
+  #clockSyncModal.minimized #clockSyncOverlay, #clockSyncModal.minimized #clockSyncRedrawBtn,
+  #clockSyncModal.minimized > .modal-panel > div[style*="font-size:12px"] { display:none !important; }
+  #clockSyncModal.minimized #clockSyncStatus{ font-size:10px; padding:2px 0 0; }
+  #clockSyncModal.minimized #clockSyncReading{ font-size:16px; }
   .modal-panel{width:520px; max-width:92%; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px; box-shadow:0 10px 40px rgba(0,0,0,.6);} 
   .modal-panel .modal-header{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px}
   .section-grid{display:grid; grid-template-columns:1.2fr .8fr; gap:18px;}
@@ -437,7 +447,7 @@
       </div>
       <div class="data-row" style="margin-top:10px;">
         <div id="clockSyncStatus" style="font-size:13px;">Starting camera…</div>
-        <button class="ghost-btn" type="button" onclick="startClockSyncCalibration()">Redraw box</button>
+        <button class="ghost-btn" type="button" id="clockSyncRedrawBtn" onclick="startClockSyncCalibration()">Redraw box</button>
       </div>
       <div id="clockSyncReading" style="font-size:28px;font-weight:800;text-align:center;margin-top:8px;letter-spacing:.05em;">--:--</div>
     </div>
@@ -4999,7 +5009,7 @@ function fmtClockMs(ms){
 async function openClockSync(){
   const game = findGame(app.selectedGameId);
   if(!game || !hasManagePermission(game)){ alert('You do not have permission to manage this game.'); return; }
-  const m = document.getElementById('clockSyncModal'); m.style.display='flex'; m.classList.remove('hidden');
+  const m = document.getElementById('clockSyncModal'); m.style.display='flex'; m.classList.remove('hidden'); m.classList.remove('minimized'); m.onclick = null;
   clockSyncBox = null; clockSyncHistory = []; clockSyncLastAppliedMs = null;
   document.getElementById('clockSyncStatus').textContent = 'Starting camera…';
   document.getElementById('clockSyncReading').textContent = '--:--';
@@ -5060,7 +5070,7 @@ function closeClockSync(){
   if(clockSyncInterval){ clearInterval(clockSyncInterval); clockSyncInterval=null; }
   if(clockSyncOcrInterval){ clearInterval(clockSyncOcrInterval); clockSyncOcrInterval=null; }
   if(clockSyncStream){ clockSyncStream.getTracks().forEach(t=>t.stop()); clockSyncStream=null; }
-  const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='none'; m.classList.add('hidden'); }
+  const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='none'; m.classList.add('hidden'); m.classList.remove('minimized'); m.onclick = null; }
   renderGame();
 }
 // A real water polo clock stops constantly — fouls, timeouts, between quarters — so a single
@@ -5071,11 +5081,17 @@ function closeClockSync(){
 // so the game clock keeps tracking the real one continuously instead of just extrapolating forward
 // from one point-in-time reading.
 function minimizeClockSync(){
-  const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='none'; m.classList.add('hidden'); }
+  // display:none (or removing it from layout entirely) is exactly what stops this from working:
+  // browsers routinely stop decoding new frames from a hidden/off-screen <video>, so a "minimized"
+  // feed that's actually hidden just freezes on whatever frame it had at that instant — every
+  // reading after that re-samples the same stale frame, locks onto one value, and never corrects
+  // again, which is exactly "says synced but then just counts down on its own." Shrinking it into a
+  // small corner widget that's still genuinely rendered keeps real frames flowing.
+  const m = document.getElementById('clockSyncModal'); if(m){ m.classList.add('minimized'); m.onclick = reopenClockSync; }
   renderGame();
 }
 function reopenClockSync(){
-  const m = document.getElementById('clockSyncModal'); if(m){ m.style.display='flex'; m.classList.remove('hidden'); }
+  const m = document.getElementById('clockSyncModal'); if(m){ m.classList.remove('minimized'); m.onclick = null; }
 }
 function isClockSyncActive(){ return !!(clockSyncInterval || clockSyncOcrInterval); }
 // Switching between a real segmented display and a video-board/TV rendering needs a completely
